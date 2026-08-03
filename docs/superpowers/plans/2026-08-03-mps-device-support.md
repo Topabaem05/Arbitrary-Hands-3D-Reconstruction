@@ -46,6 +46,6 @@
 **Files:**
 - Commit the design, plan, production change, and regression tests.
 
-- [ ] Push branch `agent/mps-device-support`.
-- [ ] Open a draft pull request targeting `main`.
-- [ ] Fetch the committed file and compare branch against `main`.
+- [x] Push branch `agent/mps-device-support`.
+- [x] Open a draft pull request targeting `main`.
+- [x] Fetch the committed file and compare branch against `main`.
