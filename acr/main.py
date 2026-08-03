@@ -1,8 +1,97 @@
-import sys, os, cv2
+import os
+
+# Allow individual MPS operators that are not implemented yet to run on CPU.
+# This must be set before importing torch.
+os.environ.setdefault('PYTORCH_ENABLE_MPS_FALLBACK', '1')
+
+import sys
+import cv2
 from tqdm import tqdm
 import logging
 import torch
 import torch.nn as nn
+
+
+def select_inference_device():
+    """Select CUDA first, then Apple MPS, with CPU as the final fallback."""
+    if torch.cuda.is_available():
+        return torch.device('cuda')
+
+    mps_backend = getattr(torch.backends, 'mps', None)
+    if mps_backend is not None and mps_backend.is_available():
+        return torch.device('mps')
+
+    return torch.device('cpu')
+
+
+def move_to_device(value, device):
+    """Recursively move tensors while preserving non-tensor metadata."""
+    if torch.is_tensor(value):
+        return value.to(device)
+    if isinstance(value, dict):
+        return {key: move_to_device(item, device) for key, item in value.items()}
+    if isinstance(value, list):
+        return [move_to_device(item, device) for item in value]
+    if isinstance(value, tuple):
+        return tuple(move_to_device(item, device) for item in value)
+    return value
+
+
+def redirect_legacy_tensor_cuda(device):
+    """Route legacy Tensor.cuda() calls to MPS/CPU when CUDA is unavailable.
+
+    The upstream inference stack contains several direct Tensor.cuda() calls
+    outside this entry point. Replacing those calls in every research module
+    would produce a wider, harder-to-review patch, so the demo entry point
+    installs this narrow compatibility redirect only on non-CUDA systems.
+    """
+    if device.type == 'cuda':
+        return
+    if getattr(torch.Tensor.cuda, '_acr_device_redirect', False):
+        return
+
+    selected_device = device
+
+    def tensor_cuda(tensor, device=None, non_blocking=False,
+                    memory_format=torch.preserve_format):
+        return tensor.to(
+            selected_device,
+            non_blocking=non_blocking,
+            memory_format=memory_format,
+        )
+
+    tensor_cuda._acr_device_redirect = True
+    torch.Tensor.cuda = tensor_cuda
+    logging.info('Redirecting legacy Tensor.cuda() calls to %s', selected_device)
+
+
+def load_model_on_cpu(path, model, prefix='module.', drop_prefix='',
+                      fix_loaded=False):
+    """Load checkpoint storage on CPU before moving the model to its backend."""
+    logging.info('using fine_tune model: %s', path)
+    if not os.path.exists(path):
+        logging.warning('model %s not exist!', path)
+        raise ValueError('model {} not exist'.format(path))
+
+    pretrained_model = torch.load(path, map_location='cpu')
+    if isinstance(pretrained_model, dict):
+        if 'model_state_dict' in pretrained_model:
+            pretrained_model = pretrained_model['model_state_dict']
+        if 'state_dict' in pretrained_model:
+            pretrained_model = pretrained_model['state_dict']
+
+    copy_state_dict(
+        model.state_dict(),
+        pretrained_model,
+        prefix=prefix,
+        drop_prefix=drop_prefix,
+        fix_loaded=fix_loaded,
+    )
+    return model
+
+
+INFERENCE_DEVICE = select_inference_device()
+redirect_legacy_tensor_cuda(INFERENCE_DEVICE)
 
 ##################
 # config and utils
@@ -21,13 +110,16 @@ if args().model_precision=='fp16':
 from acr.model import ACR as ACR_v1
 from acr.mano_wrapper import MANOWrapper
 
+
 class ACR(nn.Module):
     def __init__(self, args_set=None):
         super(ACR, self).__init__()
         self.demo_cfg = {'mode':'parsing', 'calc_loss': False}
         self.project_dir = config.project_dir
+        self.device = INFERENCE_DEVICE
         self._initialize_(vars(args() if args_set is None else args_set))
 
+        logging.info('Using inference device: %s', self.device)
         logging.info('Loading {} renderer as visualizer, rendering size: {}'.format(self.renderer, self.render_size))
         self.visualizer = Visualizer(resolution=(self.render_size,self.render_size), renderer_type=self.renderer)
 
@@ -43,7 +135,19 @@ class ACR(nn.Module):
             hparams_dict[i] = j
 
         logging.basicConfig(level=logging.INFO)
-        logging.info(config_dict)
+
+        # CUDA AMP is not used on MPS/CPU in this compatibility path. Keeping
+        # inference in FP32 avoids the imported model's CUDA-only autocast.
+        if self.device.type != 'cuda' and self.model_precision == 'fp16':
+            logging.warning(
+                'FP16 is CUDA-only in this repository; using FP32 on %s.',
+                self.device,
+            )
+            self.model_precision = 'fp32'
+            args().model_precision = 'fp32'
+            hparams_dict['model_precision'] = 'fp32'
+
+        logging.info(hparams_dict)
         logging.info('-'*66)
 
         # optimizations parameters
@@ -56,11 +160,18 @@ class ACR(nn.Module):
 
     def _build_model_(self):
         model = ACR_v1().eval()
-        model = load_model(self.model_path, model, prefix = 'module.', drop_prefix='', fix_loaded=False) 
-        # train_entire_model(model)
-        self.model = nn.DataParallel(model.cuda())
-        self.model.eval()
-        self.mano_regression = MANOWrapper().cuda()
+        model = load_model_on_cpu(
+            self.model_path,
+            model,
+            prefix='module.',
+            drop_prefix='',
+            fix_loaded=False,
+        )
+        model = model.to(self.device)
+        if self.device.type == 'cuda':
+            model = nn.DataParallel(model)
+        self.model = model.eval()
+        self.mano_regression = MANOWrapper().to(self.device).eval()
 
     @torch.no_grad()
     def process_results(self, outputs):
@@ -128,6 +239,9 @@ class ACR(nn.Module):
 
         ds_org, imgpath_org = get_remove_keys(meta_data,keys=['data_set','imgpath'])
         meta_data['batch_ids'] = torch.arange(len(meta_data['image']))
+        if self.device.type != 'cuda':
+            meta_data = move_to_device(meta_data, self.device)
+
         if self.model_precision=='fp16':
             with autocast():
                 outputs = self.model(meta_data, **self.demo_cfg)
