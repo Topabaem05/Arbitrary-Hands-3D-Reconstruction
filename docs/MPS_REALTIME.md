@@ -7,7 +7,7 @@ The realtime path is designed to keep the webcam window responsive at 30–60 di
 Use an Apple Silicon Mac with a recent MPS-enabled PyTorch build and place the MANO files and checkpoint as described in the main README.
 
 ```bash
-./scripts/run_mps_realtime.sh
+bash scripts/run_mps_realtime.sh
 ```
 
 Press `q` or Escape to exit.
@@ -24,13 +24,13 @@ Examples:
 
 ```bash
 # Default 60 Hz display target; inference runs continuously on the newest frame.
-ACR_TARGET_FPS=60 ./scripts/run_mps_realtime.sh
+ACR_TARGET_FPS=60 bash scripts/run_mps_realtime.sh
 
 # Higher reconstruction quality at lower throughput.
-ACR_MPS_PROFILE=balanced ACR_TARGET_FPS=30 ./scripts/run_mps_realtime.sh
+ACR_MPS_PROFILE=balanced ACR_TARGET_FPS=30 bash scripts/run_mps_realtime.sh
 
 # Full mesh rendering. This is normally slower than the keypoint display path.
-ACR_MPS_PROFILE=quality ACR_LIVE_VISUALIZATION=mesh ./scripts/run_mps_realtime.sh
+ACR_MPS_PROFILE=quality ACR_LIVE_VISUALIZATION=mesh bash scripts/run_mps_realtime.sh
 ```
 
 ## What the optimization changes
