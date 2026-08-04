@@ -1,124 +1,29 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#07090d">
-  <meta name="description" content="Private, real-time hand tracking in your browser with ONNX Runtime Web and WebGPU.">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#03050a">
+  <meta name="description" content="WebGPU로 브라우저 안에서 실행되는 실시간 손 추적 화면입니다.">
   <title>ACR Hand Lab — WebGPU</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="./" aria-label="ACR Hand Lab home">
-      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-      <span>ACR Hand Lab</span>
-    </a>
-    <div class="top-status" role="status" aria-live="polite">
-      <span id="statusDot" class="status-dot" data-level="idle"></span>
-      <span id="statusText">Ready. Models load on demand.</span>
-    </div>
-    <a class="source-link" href="https://github.com/Topabaem05/Arbitrary-Hands-3D-Reconstruction" rel="noreferrer">Source</a>
-  </header>
+  <main class="hand-stage" aria-label="실시간 3D 손 모델">
+    <canvas id="skeletonCanvas" aria-label="드래그해 회전할 수 있는 3D 손 모델"></canvas>
 
-  <main class="app-shell">
-    <section class="stage" aria-label="Live hand tracking workspace">
-      <div class="stage-head">
-        <div>
-          <h1>Real-time hand reconstruction, entirely on device.</h1>
-          <p>WebGPU runs the ONNX models locally. Camera frames are never uploaded.</p>
-        </div>
-        <div class="stage-actions">
-          <button id="startCamera" class="button button-primary" type="button">Start camera</button>
-          <button id="startDemo" class="button" type="button">Demo</button>
-          <label class="button file-button">Open image<input id="imageInput" type="file" accept="image/*"></label>
-          <button id="stopCamera" class="button button-quiet" type="button" disabled>Stop</button>
-        </div>
-      </div>
-
-      <div class="viewport-grid">
-        <article class="viewport viewport-live">
-          <div class="viewport-label"><span>Camera + 2D landmarks</span><span id="modeValue">idle</span></div>
-          <video id="cameraVideo" aria-hidden="true"></video>
-          <canvas id="overlayCanvas" aria-label="Camera view with hand landmarks"></canvas>
-        </article>
-        <article class="viewport viewport-three">
-          <div class="viewport-label"><span>3D skeleton</span><span>drag to rotate</span></div>
-          <canvas id="skeletonCanvas" aria-label="Interactive three-dimensional hand skeleton"></canvas>
-        </article>
-      </div>
-
-      <div class="metric-strip" aria-label="Performance metrics">
-        <div><span>Backend</span><strong id="backendValue">not loaded</strong></div>
-        <div><span>Inference</span><strong id="inferenceValue">0.0 FPS</strong></div>
-        <div><span>Display</span><strong id="displayValue">0.0 FPS</strong></div>
-        <div><span>Latency</span><strong id="latencyValue">—</strong></div>
-        <div><span>Privacy</span><strong id="privacyState">camera off</strong></div>
-      </div>
-    </section>
-
-    <aside class="control-panel" aria-label="Runtime controls">
-      <section class="control-section">
-        <h2>Runtime</h2>
-        <label class="field">
-          <span>Execution backend</span>
-          <select id="backendSelect">
-            <option value="auto">WebGPU, then WASM</option>
-            <option value="webgpu">Require WebGPU</option>
-            <option value="wasm">WASM only</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Maximum hands</span>
-          <select id="maxHands">
-            <option value="1">1 hand — fastest</option>
-            <option value="2">2 hands</option>
-          </select>
-        </label>
-        <label class="toggle-row">
-          <span><strong>Mirror camera</strong><small>Matches a front-facing preview</small></span>
-          <input id="mirrorCamera" type="checkbox" checked>
-        </label>
-      </section>
-
-      <details class="control-section advanced">
-        <summary>Model source</summary>
-        <p class="section-note">The public build uses Apache-2.0 OpenCV MediaPipe ONNX files. Override with local files to avoid network model fetches.</p>
-        <label class="field">
-          <span>Palm detector URL</span>
-          <input id="detectorUrl" type="url" spellcheck="false">
-        </label>
-        <label class="field">
-          <span>Landmark model URL</span>
-          <input id="landmarkUrl" type="url" spellcheck="false">
-        </label>
-        <label class="file-field">
-          <span>Local palm detector</span>
-          <input id="detectorFile" type="file" accept=".onnx,application/octet-stream">
-        </label>
-        <label class="file-field">
-          <span>Local landmark model</span>
-          <input id="landmarkFile" type="file" accept=".onnx,application/octet-stream">
-        </label>
-        <button id="reloadModels" class="button button-wide" type="button">Reload model sessions</button>
-      </details>
-
-      <details class="control-section diagnostics-section">
-        <summary>Diagnostics</summary>
-        <pre id="diagnostics">No runtime events yet.</pre>
-      </details>
-
-      <section class="control-section note-section">
-        <h2>ACR model conversion</h2>
-        <p>The original ACR checkpoint can be exported locally with <code>tools/export_acr_webgpu.py</code>. MANO assets are not included in this public deployment because their license forbids redistribution.</p>
-      </section>
+    <aside id="cameraPip" class="cam-pip" aria-label="카메라 미리보기" hidden>
+      <video id="cameraVideo" playsinline muted aria-hidden="true"></video>
+      <canvas id="overlayCanvas" aria-label="손 관절이 표시된 카메라 미리보기"></canvas>
     </aside>
-  </main>
 
-  <footer>
-    <span>Camera inference remains in this browser.</span>
-    <span>WebGPU requires a current Chromium-based browser; WASM is used otherwise.</span>
-  </footer>
+    <button id="startCamera" class="start-overlay" type="button">
+      <span id="startLabel" class="start-title">카메라 시작</span>
+      <span id="startDetail" class="start-detail">WebGPU로 이 브라우저 안에서만 처리됩니다</span>
+    </button>
+
+    <div id="liveStatus" class="sr-only" role="status" aria-live="polite">카메라 시작 대기 중</div>
+  </main>
 
   <script type="module" src="./app.js"></script>
 </body>
