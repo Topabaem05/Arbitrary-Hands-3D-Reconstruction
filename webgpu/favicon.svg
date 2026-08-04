@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ACR hand">
+  <rect width="64" height="64" rx="14" fill="#03050a"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 35V18c0-3 2-5 5-5s5 2 5 5v14" stroke="#6fd7ff" stroke-width="7"/>
+    <path d="M32 31V13c0-3 2-5 5-5s5 2 5 5v20" stroke="#6fd7ff" stroke-width="7"/>
+    <path d="M42 34V18c0-3 2-5 5-5s5 2 5 5v22" stroke="#ffb86b" stroke-width="7"/>
+    <path d="M22 34 14 29c-3-2-7-1-8 2-1 2 0 5 2 7l14 14c3 3 7 4 11 4h7c10 0 18-8 18-18V25" stroke="#f4f7fb" stroke-width="7"/>
+  </g>
+</svg>
