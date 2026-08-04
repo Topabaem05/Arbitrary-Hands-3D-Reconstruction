@@ -1,0 +1,63 @@
+name: WebGPU browser
+
+on:
+  push:
+    branches: [main, agent/webgpu-browser]
+    paths:
+      - 'webgpu/**'
+      - 'tools/export_acr_webgpu.py'
+      - 'tests/test_acr_webgpu_export.py'
+      - 'docs/WEBGPU.md'
+      - '.github/workflows/webgpu.yml'
+  pull_request:
+    paths:
+      - 'webgpu/**'
+      - 'tools/export_acr_webgpu.py'
+      - 'tests/test_acr_webgpu_export.py'
+      - 'docs/WEBGPU.md'
+      - '.github/workflows/webgpu.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install CPU test dependency
+        run: pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu
+
+      - name: JavaScript unit tests
+        run: node --test webgpu/tests/*.test.mjs
+
+      - name: Python exporter tests
+        run: python -m unittest tests/test_acr_webgpu_export.py -v
+
+      - name: Syntax and configuration checks
+        run: |
+          node --check webgpu/app.js
+          for file in webgpu/src/*.js; do node --check "$file"; done
+          python -m py_compile tools/export_acr_webgpu.py tests/test_acr_webgpu_export.py
+          python -m json.tool webgpu/models/manifest.json >/dev/null
+          python -m json.tool webgpu/vercel.json >/dev/null
+
+      - name: Static server smoke check
+        run: |
+          python -m http.server 4173 --directory webgpu >/tmp/webgpu-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill $server_pid' EXIT
+          sleep 1
+          curl --fail --silent --show-error http://127.0.0.1:4173/ | grep -F 'ACR Hand Lab'
+          curl --fail --silent --show-error http://127.0.0.1:4173/models/manifest.json | python -m json.tool >/dev/null

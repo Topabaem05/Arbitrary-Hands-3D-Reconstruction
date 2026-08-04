@@ -1,0 +1,18 @@
+{
+  "version": "2026-08-04",
+  "runtime": "onnxruntime-web@1.26.0",
+  "models": {
+    "palm": {
+      "name": "OpenCV MediaPipe Palm Detection",
+      "license": "Apache-2.0",
+      "input": [1, 192, 192, 3],
+      "url": "https://huggingface.co/opencv/palm_detection_mediapipe/resolve/main/palm_detection_mediapipe_2023feb.onnx"
+    },
+    "landmark": {
+      "name": "OpenCV MediaPipe Hand Pose",
+      "license": "Apache-2.0",
+      "input": [1, 224, 224, 3],
+      "url": "https://huggingface.co/opencv/handpose_estimation_mediapipe/resolve/main/handpose_estimation_mediapipe_2023feb.onnx"
+    }
+  }
+}
