@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { buildExecutionAttempts } from '../src/runtime.js';
+import { buildExecutionAttempts, resolveDefaultManifestUrl } from '../src/runtime.js';
 
 const readWebGpuFile = (name) => readFile(new URL(`../${name}`, import.meta.url), 'utf8');
 
@@ -20,6 +20,15 @@ test('required WebGPU fails early when navigator.gpu is unavailable', () => {
   assert.throws(
     () => buildExecutionAttempts({ backend: 'webgpu', hasWebGpu: false }),
     /does not expose navigator\.gpu/,
+  );
+});
+
+test('the default manifest URL follows the runtime module instead of the page origin', () => {
+  const runtimeUrl = 'https://cdn.jsdelivr.net/gh/Topabaem05/Arbitrary-Hands-3D-Reconstruction@deadbeef/webgpu/src/runtime.js';
+
+  assert.equal(
+    resolveDefaultManifestUrl(runtimeUrl).href,
+    'https://cdn.jsdelivr.net/gh/Topabaem05/Arbitrary-Hands-3D-Reconstruction@deadbeef/webgpu/models/manifest.json',
   );
 });
 
