@@ -32,12 +32,21 @@ test('the default manifest URL follows the runtime module instead of the page or
   );
 });
 
-test('the page declares an inline favicon and suppresses non-actionable ORT warnings', async () => {
-  const [html, runtime] = await Promise.all([
+test('favicon requests resolve to a real SVG and ORT warnings stay suppressed', async () => {
+  const [html, runtime, vercel, favicon] = await Promise.all([
     readWebGpuFile('index.html'),
     readWebGpuFile('src/runtime.js'),
+    readWebGpuFile('vercel.json'),
+    readWebGpuFile('favicon.svg'),
   ]);
 
-  assert.match(html, /<link\s+rel="icon"\s+href="data:,">/);
+  assert.match(html, /<link\s+rel="icon"\s+type="image\/svg\+xml"\s+href="\/favicon\.svg">/);
   assert.match(runtime, /ort\.env\.logLevel\s*=\s*['"]error['"]/);
+  assert.match(favicon, /<svg[\s>]/);
+
+  const config = JSON.parse(vercel);
+  assert.deepEqual(
+    config.rewrites?.find((rewrite) => rewrite.source === '/favicon.ico'),
+    { source: '/favicon.ico', destination: '/favicon.svg' },
+  );
 });
