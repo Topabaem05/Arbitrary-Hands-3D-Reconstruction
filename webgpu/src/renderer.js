@@ -7,6 +7,8 @@ export const HAND_CONNECTIONS = [
   [5, 9], [9, 13], [13, 17],
 ];
 
+const PALM_SURFACE = [0, 5, 9, 13, 17];
+
 function fitCanvas(canvas) {
   const ratio = Math.min(2, window.devicePixelRatio || 1);
   const width = Math.max(1, Math.round(canvas.clientWidth * ratio));
@@ -89,17 +91,20 @@ export class OverlayRenderer {
       }
     }
 
-    const padding = 14 * (window.devicePixelRatio || 1);
-    context.font = `${13 * (window.devicePixelRatio || 1)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    if (stats.showStats === false) return;
+
+    const pixelRatio = window.devicePixelRatio || 1;
+    const padding = 14 * pixelRatio;
+    context.font = `${13 * pixelRatio}px ui-monospace, SFMono-Regular, Menlo, monospace`;
     context.textBaseline = 'top';
     context.fillStyle = 'rgba(5, 8, 12, 0.72)';
-    context.fillRect(padding, padding, Math.min(width - padding * 2, 430 * (window.devicePixelRatio || 1)), 54 * (window.devicePixelRatio || 1));
+    context.fillRect(padding, padding, Math.min(width - padding * 2, 430 * pixelRatio), 54 * pixelRatio);
     context.fillStyle = '#f7f8fa';
     const display = Number.isFinite(stats.displayFps) ? stats.displayFps.toFixed(1) : '0.0';
     const inference = Number.isFinite(stats.inferenceFps) ? stats.inferenceFps.toFixed(1) : '0.0';
     context.fillText(`display ${display} FPS  ·  inference ${inference} FPS`, padding * 1.55, padding * 1.45);
     context.fillStyle = '#9fa7b5';
-    context.fillText(`${stats.backend || 'not loaded'}  ·  ${hands.length} hand${hands.length === 1 ? '' : 's'}`, padding * 1.55, padding * 1.45 + 22 * (window.devicePixelRatio || 1));
+    context.fillText(`${stats.backend || 'not loaded'}  ·  ${hands.length} hand${hands.length === 1 ? '' : 's'}`, padding * 1.55, padding * 1.45 + 22 * pixelRatio);
   }
 }
 
@@ -153,16 +158,26 @@ export class Skeleton3DRenderer {
   }
 
   draw(hands = []) {
-    const { width, height } = fitCanvas(this.canvas);
+    const { width, height, ratio } = fitCanvas(this.canvas);
     const context = this.context;
-    const gradient = context.createLinearGradient(0, 0, 0, height);
-    gradient.addColorStop(0, '#10141c');
-    gradient.addColorStop(1, '#05070b');
-    context.fillStyle = gradient;
+
+    const background = context.createRadialGradient(
+      width * 0.5,
+      height * 0.52,
+      0,
+      width * 0.5,
+      height * 0.52,
+      Math.max(width, height) * 0.68,
+    );
+    background.addColorStop(0, '#101a28');
+    background.addColorStop(0.48, '#080d16');
+    background.addColorStop(1, '#020409');
+    context.fillStyle = background;
     context.fillRect(0, 0, width, height);
-    context.strokeStyle = 'rgba(255,255,255,0.06)';
+
+    context.strokeStyle = 'rgba(255,255,255,0.035)';
     context.lineWidth = 1;
-    const grid = 36 * (window.devicePixelRatio || 1);
+    const grid = 56 * ratio;
     for (let x = width / 2 % grid; x < width; x += grid) {
       context.beginPath(); context.moveTo(x, 0); context.lineTo(x, height); context.stroke();
     }
@@ -170,19 +185,13 @@ export class Skeleton3DRenderer {
       context.beginPath(); context.moveTo(0, y); context.lineTo(width, y); context.stroke();
     }
 
-    if (hands.length === 0) {
-      context.fillStyle = '#7f8795';
-      context.font = `${15 * (window.devicePixelRatio || 1)}px system-ui, sans-serif`;
-      context.textAlign = 'center';
-      context.fillText('3D hand skeleton', width / 2, height / 2);
-      return;
-    }
+    if (hands.length === 0) return;
 
     hands.forEach((hand, handIndex) => {
       const points3d = normalizedWorldPoints(hand).map((point) => rotatePoint(point, this.yaw, this.pitch));
-      const centerX = width * (hands.length === 1 ? 0.5 : handIndex === 0 ? 0.32 : 0.68);
-      const centerY = height * 0.56;
-      const zoom = Math.min(width, height) * 0.27;
+      const centerX = width * (hands.length === 1 ? 0.5 : handIndex === 0 ? 0.3 : 0.7);
+      const centerY = height * 0.69;
+      const zoom = Math.min(width, height) * (hands.length === 1 ? 0.5 : 0.39);
       const projected = points3d.map((point) => {
         const perspective = 1 / Math.max(0.45, 1.8 + point.z * 0.35);
         return {
@@ -193,22 +202,49 @@ export class Skeleton3DRenderer {
         };
       });
       const accent = hand.handedness === 'right' ? '#ffb86b' : '#6fd7ff';
+
+      context.save();
+      context.fillStyle = accent;
+      context.globalAlpha = 0.12;
+      context.shadowColor = accent;
+      context.shadowBlur = 28 * ratio;
+      context.beginPath();
+      context.moveTo(projected[PALM_SURFACE[0]].x, projected[PALM_SURFACE[0]].y);
+      for (const pointIndex of PALM_SURFACE.slice(1)) {
+        context.lineTo(projected[pointIndex].x, projected[pointIndex].y);
+      }
+      context.closePath();
+      context.fill();
+      context.restore();
+
+      context.save();
       context.strokeStyle = accent;
       context.lineCap = 'round';
+      context.lineJoin = 'round';
+      context.shadowColor = accent;
+      context.shadowBlur = 16 * ratio;
       for (const [start, end] of HAND_CONNECTIONS) {
         const depth = (projected[start].perspective + projected[end].perspective) * 0.5;
-        context.lineWidth = Math.max(2, depth * 5 * (window.devicePixelRatio || 1));
-        context.globalAlpha = Math.min(1, 0.55 + depth * 0.35);
+        context.lineWidth = Math.max(3 * ratio, depth * 9 * ratio);
+        context.globalAlpha = Math.min(1, 0.5 + depth * 0.5);
         context.beginPath();
         context.moveTo(projected[start].x, projected[start].y);
         context.lineTo(projected[end].x, projected[end].y);
         context.stroke();
       }
-      context.globalAlpha = 1;
+      context.restore();
+
       for (const point of projected) {
-        context.fillStyle = '#f7f8fa';
+        const radius = Math.max(3 * ratio, point.perspective * 6 * ratio);
+        context.fillStyle = accent;
+        context.globalAlpha = 0.28;
         context.beginPath();
-        context.arc(point.x, point.y, Math.max(2, point.perspective * 4 * (window.devicePixelRatio || 1)), 0, Math.PI * 2);
+        context.arc(point.x, point.y, radius * 1.8, 0, Math.PI * 2);
+        context.fill();
+        context.globalAlpha = 1;
+        context.fillStyle = '#f8fbff';
+        context.beginPath();
+        context.arc(point.x, point.y, radius * 0.62, 0, Math.PI * 2);
         context.fill();
       }
     });
