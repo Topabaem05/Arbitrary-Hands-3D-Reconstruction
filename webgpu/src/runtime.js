@@ -383,7 +383,11 @@ export class WebGpuHandTracker {
   }
 }
 
-export async function loadModelManifest(url = './models/manifest.json') {
+export function resolveDefaultManifestUrl(moduleUrl = import.meta.url) {
+  return new URL('../models/manifest.json', moduleUrl);
+}
+
+export async function loadModelManifest(url = resolveDefaultManifestUrl()) {
   const response = await fetch(url, { cache: 'no-store' });
   if (!response.ok) {
     throw new Error(`Model manifest request failed with HTTP ${response.status}.`);
