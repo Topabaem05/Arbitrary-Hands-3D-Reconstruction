@@ -2,6 +2,12 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "cleanUrls": true,
   "trailingSlash": false,
+  "rewrites": [
+    {
+      "source": "/favicon.ico",
+      "destination": "/favicon.svg"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
@@ -29,7 +35,7 @@
       ]
     },
     {
-      "source": "/(index.html|models/manifest.json)",
+      "source": "/(index.html|models/manifest.json|favicon.svg)",
       "headers": [
         {
           "key": "Cache-Control",
