@@ -1,85 +1,77 @@
-# Browser WebGPU hand tracking
+# Browser WebGPU inference and private MANO mesh
 
-The repository now has two deliberately separate browser paths.
+The browser path keeps model inference, MANO data, and camera pixels on the user's device. The public Vercel deployment contains no MANO pickle, MANO-derived bundle, ACR checkpoint, or private ONNX artifact.
 
-## 1. Public Vercel application
+## Runtime architecture
 
-`webgpu/` is a zero-build static application that runs OpenCV's Apache-2.0 MediaPipe palm and hand-landmark ONNX models through ONNX Runtime Web.
+```text
+camera frame
+  -> 192x192 MediaPipe palm detector (periodic / tracking loss)
+  -> rotated 224x224 MediaPipe landmark model
+  -> latest 21-point target state
+  -> 60 Hz landmark interpolation
+  -> private MANO 778-vertex linear blend skinning
+  -> persistent WebGL2 indexed triangle rendering
+```
 
-- Preferred execution provider: WebGPU
-- Fallback execution provider: WebAssembly
-- Palm detector input: `1 × 192 × 192 × 3` NHWC float32
-- Landmark input: `1 × 224 × 224 × 3` NHWC float32
-- Tracking: periodic palm detection plus landmark-based rotated ROI updates
-- Output: 21 screen-space points, 21 world-space points when supplied by the model, handedness, confidence, 2D overlay, and an interactive 3D skeleton
+ONNX Runtime Web prefers ordinary WebGPU execution and falls back to WebAssembly. Graph capture remains disabled because the current input path supplies CPU-backed JavaScript tensors and the model may assign shape operations to CPU. The latest-frame scheduler discards stale work instead of accumulating latency.
 
-The browser never uploads camera pixels. Model files are fetched only when camera or image inference begins. The model URL fields can be replaced with local `.onnx` files.
+The render loop is independent of the inference loop. A 60 Hz mesh animation does not imply 60 fresh neural-network results per second.
 
-### Local launch
+## Create the private MANO bundle
+
+Use your locally licensed MANO files:
 
 ```bash
-python3 -m http.server 4173 --directory webgpu
+python tools/convert_mano_browser_bundle.py \
+  --mano-root mano \
+  --output mano-browser-bundle.json \
+  --acknowledge-mano-license
 ```
 
-Open:
+The converter writes `mano-browser-bundle-v1` with, for each hand:
 
-```text
-http://localhost:4173/
-```
+- 778 neutral vertices
+- MANO triangle faces
+- 16-joint skinning weights
+- 16 rest skin joints
+- 21 rest landmarks
+- skin-joint parent indices
 
-The dependency-free product demo is available at:
+The file is marked non-redistributable and is ignored by Git. Do not upload it to Vercel or publish it unless the applicable MANO agreement explicitly permits redistribution.
 
-```text
-http://localhost:4173/?demo=1
-```
+## Browser flow
 
-### Vercel
+1. Open the deployed site or local server.
+2. On first use, select `mano-browser-bundle.json`.
+3. The browser validates all dimensions, finite values, face bounds, and weight normalization before saving it to IndexedDB.
+4. Press **카메라 시작**.
+5. The full-screen canvas displays the filled hand surface; the lower-right PIP shows the camera and landmark overlay.
 
-Set the Vercel project's **Root Directory** to `webgpu`. There is no build command and no output directory. `webgpu/vercel.json` adds camera permissions, cross-origin isolation headers, and cache policy.
+Keyboard controls:
 
-The app reports display FPS and completed inference FPS independently. A 60 Hz preview does not imply 60 new neural-network results per second.
+- `Escape`: stop the camera.
+- `Shift+Delete`: remove the bundle from IndexedDB and return to local file selection.
 
-## 2. Private ACR conversion
+The default is one hand for the base-M1 performance target. Add `?hands=2` to the URL to enable two hands.
 
-The original ACR network is not directly browser-compatible because its runtime parser uses dynamic Python control flow, tensor-length-dependent branches, CUDA-specific calls, CPU `solvePnP`, and MANO post-processing. `tools/export_acr_webgpu.py` replaces that parser with a fixed contract:
+## M1 performance target
 
-```text
-input image       [1, H, H, 3] float32 RGB, range 0..1
-params            [1, 2, 109]  left/right ACR parameters
-scores            [1, 2]
-centers           [1, 2, 2]
-valid             [1, 2]
-```
+Target environment: base Apple M1 Mac and a current Chrome build.
 
-The output always contains one left slot and one right slot. Invalid slots are zeroed. This eliminates dynamic output lengths and is suitable for ONNX Runtime Web's static WebGPU path.
+- Display / mesh animation: 60 Hz target where the display permits.
+- Fresh landmark inference: minimum target 30 FPS, aspirational 45-60 FPS.
+- Camera preview: submitted through a one-slot latest-frame queue.
+- Palm detector interval: every 12 completed frames unless tracking is lost.
+- WebGL allocations: shader programs and buffers are created once; vertices and normals update through `bufferSubData`.
+- Mesh size: 778 vertices per hand, with indexed triangle rendering and CPU normal recomputation.
+- Background: exactly `#000000`.
 
-### Neural core only
+Record display FPS, fresh inference FPS, p50/p95 latency, Chrome version, macOS version, camera format, and thermal conditions before claiming a sustained M1 result. The PR remains draft until this hardware measurement is recorded.
 
-Install a recent PyTorch ONNX toolchain in the existing ACR environment:
+## Private full ACR export
 
-```bash
-pip install onnx onnxscript
-```
-
-Export at 256 pixels:
-
-```bash
-python tools/export_acr_webgpu.py \
-  --checkpoint checkpoints/wild.pkl \
-  --output private_models/acr-core-256.onnx \
-  --input-size 256
-```
-
-The command writes:
-
-```text
-private_models/acr-core-256.onnx
-private_models/acr-core-256.onnx.json
-```
-
-### Local full ACR + MANO model
-
-A full export embeds MANO tensors and adds static vertex/joint outputs:
+`tools/export_acr_webgpu.py` remains available for a private fixed-shape ACR ONNX export. Its neural core predicts static left/right ACR parameter slots; optional `--include-mano` embeds locally licensed MANO tensors and must remain private unless redistribution is permitted.
 
 ```bash
 python tools/export_acr_webgpu.py \
@@ -91,28 +83,4 @@ python tools/export_acr_webgpu.py \
   --acknowledge-mano-license
 ```
 
-This mode is intentionally fail-closed without the acknowledgement flag. The generated ONNX contains MANO-derived data and must remain private unless the user's MANO agreement explicitly permits redistribution. The repository, GitHub branch, and Vercel deployment do not contain MANO files or generated ACR/MANO artifacts.
-
-## Model source and licenses
-
-The public application loads:
-
-- `opencv/palm_detection_mediapipe`
-- `opencv/handpose_estimation_mediapipe`
-
-Both model repositories identify their files as Apache-2.0. ONNX Runtime is MIT-licensed. ACR source code is Apache-2.0, but checkpoint and MANO rights must be checked separately before publishing converted artifacts.
-
-## Browser requirements
-
-Use a current Chrome or Edge build for WebGPU. On macOS, browser WebGPU maps to Metal through the browser implementation. Browsers without WebGPU use ONNX Runtime Web's WASM execution provider. Camera access requires a secure context (`https://` or localhost).
-
-## Performance controls
-
-- One hand is the default for minimum latency.
-- Two-hand mode runs the landmark model once per ROI.
-- Palm detection runs every eighth completed frame unless tracking is lost.
-- Static shapes enable the runtime to attempt WebGPU graph capture.
-- The latest-frame scheduler drops stale pending work rather than accumulating delay.
-- Model compilation and first inference are excluded from steady-state FPS interpretation.
-
-Actual throughput depends on browser version, GPU, thermal state, model operator placement, and camera resolution. Measure the application's **Inference** metric on the target machine before claiming a fixed 30 or 60 inference FPS.
+The public real-time page currently uses the lighter landmark-driven MANO deformation path to maximize base-M1 responsiveness. It uses the original MANO topology but is not equivalent to running the complete HRNet-based ACR network on every frame.
