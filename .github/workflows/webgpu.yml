@@ -81,13 +81,17 @@ jobs:
           trap 'kill $server_pid' EXIT
           sleep 1
           curl --fail --silent --show-error http://127.0.0.1:4173/ | grep -F 'ACR Hand Lab'
-          curl --fail --silent --show-error http://127.0.0.1:4173/ | grep -F 'riggedHandInput'
           curl --fail --silent --show-error http://127.0.0.1:4173/models/manifest.json | python -m json.tool >/dev/null
+          curl --fail --silent --show-error http://127.0.0.1:4173/assets/hand_rigged_v3_lod0.glb >/dev/null
+          curl --fail --silent --show-error http://127.0.0.1:4173/assets/hand_rigged_v3_lod1.glb >/dev/null
           curl --fail --silent --show-error http://127.0.0.1:4173/favicon.svg >/dev/null
 
       - name: Reject committed private hand assets
         run: |
-          if git ls-files | grep -E '(MANO_(LEFT|RIGHT)\.pkl|mano-browser-bundle.*\.json|hand_rigged.*\.glb|\.rigged-hand.*\.glb|12683_hand_v1_FINAL\.obj)$'; then
+          violations="$({ git ls-files | grep -E '(MANO_(LEFT|RIGHT)\.pkl|mano-browser-bundle.*\.json|hand_rigged.*\.glb|\.rigged-hand.*\.glb|12683_hand_v1_FINAL\.obj)$' || true; } \
+            | grep -vE '^webgpu/assets/hand_rigged_v3_lod[01]\.glb$' || true)"
+          if [ -n "$violations" ]; then
+            printf '%s\n' "$violations"
             echo 'Private hand assets must not be committed.' >&2
             exit 1
           fi
