@@ -33,3 +33,10 @@ test('page pins Three.js imports and keeps the private asset out of deployment',
   assert.match(html, /three@0\.185\.1\/examples\/jsm\//);
   assert.doesNotMatch(html, /\.glb[^<]*src=/);
 });
+
+test('app previews the loaded rig and hides the rest pose only while live tracking starts', async () => {
+  const app = await read('app.js');
+  assert.match(app, /rigRenderer\.showRestPose\(\)/);
+  assert.match(app, /rigRenderer\.reset\(\{\s*showRestPose:\s*false\s*\}\)/);
+  assert.match(app, /ACR_RIG_BUILD/);
+});
