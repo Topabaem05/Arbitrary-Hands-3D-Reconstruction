@@ -13,3 +13,14 @@ webgpu/private_models/
 *.onnx.json
 mano-browser-bundle*.json
 webgpu/mano-browser-bundle*.json
+
+# Uploaded and generated private rigged-hand assets.
+hand_v1_L1*.zip
+hand_v1_L1*/
+hand_rig_work/
+rigged_hand_assets/
+12683_hand_v1_FINAL.obj
+hand_rigged*.glb
+hand_rigged*.glb.json
+*.rigged-hand*.glb
+*.rigged-hand*.glb.json
