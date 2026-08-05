@@ -11,3 +11,5 @@ active_configs/*
 private_models/
 webgpu/private_models/
 *.onnx.json
+mano-browser-bundle*.json
+webgpu/mano-browser-bundle*.json
