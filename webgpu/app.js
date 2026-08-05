@@ -1,32 +1,39 @@
-import { CameraController, scheduleVideoFrames } from './src/camera.js';
-import { OverlayRenderer, Skeleton3DRenderer } from './src/renderer.js';
+import { CameraController, captureVideoFrame, scheduleVideoFrames } from './src/camera.js';
+import { loadManoBundleFile, ManoBundleStore } from './src/mano-bundle.js';
+import { HandMeshRenderer } from './src/mesh-renderer.js';
+import { OverlayRenderer } from './src/renderer.js';
 import { WebGpuHandTracker, loadModelManifest } from './src/runtime.js';
 import { LatestFrameScheduler } from './src/scheduler.js';
 
 const elements = {
   video: document.querySelector('#cameraVideo'),
   overlay: document.querySelector('#overlayCanvas'),
-  skeleton: document.querySelector('#skeletonCanvas'),
+  mesh: document.querySelector('#meshCanvas'),
   pip: document.querySelector('#cameraPip'),
   start: document.querySelector('#startCamera'),
   startLabel: document.querySelector('#startLabel'),
   startDetail: document.querySelector('#startDetail'),
+  manoBundleInput: document.querySelector('#manoBundleInput'),
   liveStatus: document.querySelector('#liveStatus'),
 };
 
 const overlayRenderer = new OverlayRenderer(elements.overlay, { mirrored: true });
-const skeletonRenderer = new Skeleton3DRenderer(elements.skeleton);
 const camera = new CameraController(elements.video);
+const bundleStore = new ManoBundleStore();
+const maxHands = new URLSearchParams(location.search).get('hands') === '2' ? 2 : 1;
 
+let meshRenderer = null;
+let manoBundle = null;
 let manifest = null;
 let tracker = null;
 let scheduler = null;
 let loadingPromise = null;
-let cancelVideoLoop = null;
+let cancelCaptureLoop = null;
 let latestResult = null;
 let latestGeneration = 0;
 let snapshotPending = false;
-let mode = 'idle';
+let mode = 'initializing';
+let renderRequest = 0;
 
 function showPrompt(title, detail, level = 'idle') {
   elements.startLabel.textContent = title;
@@ -45,14 +52,18 @@ function hidePrompt(message) {
   elements.liveStatus.textContent = message;
 }
 
-function cameraErrorMessage(error) {
-  if (error?.name === 'NotAllowedError') {
-    return '브라우저의 카메라 권한을 허용한 뒤 다시 누르세요';
-  }
-  if (error?.name === 'NotFoundError') {
-    return '사용할 수 있는 카메라를 찾지 못했습니다';
-  }
-  return '카메라 또는 WebGPU 모델을 시작하지 못했습니다';
+function bundlePrompt() {
+  showPrompt('MANO 모델 불러오기', '로컬 변환한 mano-browser-bundle.json을 선택하세요');
+}
+
+function cameraPrompt(detail = 'WebGPU 추론과 MANO 메시가 이 브라우저 안에서만 실행됩니다') {
+  showPrompt('카메라 시작', detail);
+}
+
+function errorMessage(error) {
+  if (error?.name === 'NotAllowedError') return '브라우저 카메라 권한을 허용한 뒤 다시 누르세요';
+  if (error?.name === 'NotFoundError') return '사용할 수 있는 카메라를 찾지 못했습니다';
+  return error instanceof Error ? error.message : '카메라 또는 모델을 시작하지 못했습니다';
 }
 
 async function ensureManifest() {
@@ -63,26 +74,24 @@ async function ensureManifest() {
 async function loadTracker() {
   if (tracker) return tracker;
   if (loadingPromise) return loadingPromise;
-
   loadingPromise = (async () => {
     const modelManifest = await ensureManifest();
     const nextTracker = new WebGpuHandTracker({
       manifest: modelManifest,
       backend: 'auto',
-      maxHands: 2,
-      detectorInterval: 8,
+      maxHands,
+      detectorInterval: 12,
       scoreThreshold: 0.55,
     });
     const diagnostics = await nextTracker.load();
     tracker = nextTracker;
     scheduler = new LatestFrameScheduler(
-      async (bitmap) => tracker.infer(bitmap),
-      { dispose: (bitmap) => bitmap?.close?.() },
+      async (frame) => tracker.infer(frame),
+      { dispose: (frame) => frame?.close?.() },
     );
     console.info('ACR Hand Lab runtime', diagnostics);
     return tracker;
   })();
-
   try {
     return await loadingPromise;
   } finally {
@@ -90,37 +99,34 @@ async function loadTracker() {
   }
 }
 
-function updateLatestInference() {
+function updateLatestInference(now) {
   const scheduled = scheduler?.latest;
   if (!scheduled || scheduled.generation === latestGeneration) return;
   latestGeneration = scheduled.generation;
-
   if (scheduled.error) {
     console.error('WebGPU hand inference failed', scheduled.error);
-    void stopCamera({
-      title: '다시 시도',
-      detail: '실시간 손 추론 중 오류가 발생했습니다',
-      level: 'error',
-    });
+    void stopCamera({ title: '다시 시도', detail: '실시간 손 추론 중 오류가 발생했습니다', level: 'error' });
     return;
   }
   latestResult = scheduled.value;
+  meshRenderer?.updateHands(latestResult?.hands || [], now);
 }
 
-function renderCurrentFrame() {
-  const hands = latestResult?.hands || [];
-  overlayRenderer.draw(elements.video, hands, { showStats: false });
-  skeletonRenderer.draw(hands);
+function renderLoop(now) {
+  updateLatestInference(now);
+  meshRenderer?.render(now);
+  if (mode === 'camera' && elements.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    overlayRenderer.draw(elements.video, latestResult?.hands || []);
+  }
+  renderRequest = requestAnimationFrame(renderLoop);
 }
 
 async function submitCurrentVideoFrame() {
   if (!tracker || !scheduler || snapshotPending) return;
-  if (scheduler.pending !== undefined) return;
   if (!(elements.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)) return;
-
   snapshotPending = true;
   try {
-    scheduler.submit(await createImageBitmap(elements.video));
+    scheduler.submit(await captureVideoFrame(elements.video));
   } catch (error) {
     console.error('Camera snapshot failed', error);
   } finally {
@@ -128,77 +134,120 @@ async function submitCurrentVideoFrame() {
   }
 }
 
-function startCameraRenderLoop() {
-  cancelVideoLoop?.();
-  cancelVideoLoop = scheduleVideoFrames(elements.video, () => {
-    if (mode !== 'camera') return;
-    updateLatestInference();
-    renderCurrentFrame();
-    void submitCurrentVideoFrame();
+function startCaptureLoop() {
+  cancelCaptureLoop?.();
+  cancelCaptureLoop = scheduleVideoFrames(elements.video, () => {
+    if (mode === 'camera') void submitCurrentVideoFrame();
   });
 }
 
 async function startCamera() {
+  if (!manoBundle) {
+    elements.manoBundleInput.click();
+    return;
+  }
   if (mode !== 'idle') return;
   mode = 'loading';
   showPrompt('카메라 연결 중', 'WebGPU 모델을 불러오고 있습니다', 'working');
-
   try {
-    const cameraPromise = camera.start();
-    const trackerPromise = loadTracker();
-    await Promise.all([cameraPromise, trackerPromise]);
-
+    await Promise.all([camera.start(), loadTracker()]);
     tracker.reset();
+    meshRenderer.resetTracking();
     latestResult = null;
     latestGeneration = scheduler?.latest?.generation || 0;
     elements.pip.hidden = false;
     mode = 'camera';
-    document.body.dataset.state = 'running';
-    hidePrompt('카메라 추론 실행 중');
-    startCameraRenderLoop();
+    hidePrompt('카메라와 MANO 메시 실행 중');
+    startCaptureLoop();
   } catch (error) {
     console.error('Unable to start camera experience', error);
     await camera.stop();
     elements.pip.hidden = true;
     mode = 'idle';
-    delete document.body.dataset.state;
-    showPrompt('다시 시도', cameraErrorMessage(error), 'error');
+    showPrompt('다시 시도', errorMessage(error), 'error');
   }
 }
 
-async function stopCamera({
-  title = '카메라 시작',
-  detail = 'WebGPU로 이 브라우저 안에서만 처리됩니다',
-  level = 'idle',
-} = {}) {
-  cancelVideoLoop?.();
-  cancelVideoLoop = null;
+async function stopCamera({ title = '카메라 시작', detail, level = 'idle' } = {}) {
+  cancelCaptureLoop?.();
+  cancelCaptureLoop = null;
   await camera.stop();
   elements.pip.hidden = true;
   latestResult = null;
-  mode = 'idle';
-  delete document.body.dataset.state;
-  skeletonRenderer.draw([]);
-  showPrompt(title, detail, level);
+  meshRenderer?.resetTracking();
+  mode = manoBundle ? 'idle' : 'bundle';
+  if (manoBundle) showPrompt(title, detail || 'WebGPU 추론과 MANO 메시가 이 브라우저 안에서만 실행됩니다', level);
+  else bundlePrompt();
+}
+
+async function importBundle(file) {
+  mode = 'loading';
+  showPrompt('MANO 모델 확인 중', '파일 구조와 메시 데이터를 검사하고 있습니다', 'working');
+  try {
+    const bundle = await loadManoBundleFile(file);
+    await bundleStore.save(bundle);
+    manoBundle = bundle;
+    meshRenderer.setBundle(bundle);
+    mode = 'idle';
+    cameraPrompt('MANO 모델이 이 브라우저에 저장되었습니다');
+  } catch (error) {
+    console.error('MANO bundle import failed', error);
+    mode = 'bundle';
+    showPrompt('다시 선택', error instanceof Error ? error.message : 'MANO 번들을 읽지 못했습니다', 'error');
+  } finally {
+    elements.manoBundleInput.value = '';
+  }
+}
+
+async function clearPrivateBundle() {
+  await stopCamera();
+  await bundleStore.clear();
+  manoBundle = null;
+  meshRenderer?.setBundle(null);
+  mode = 'bundle';
+  bundlePrompt();
 }
 
 elements.start.addEventListener('click', () => void startCamera());
+elements.manoBundleInput.addEventListener('change', () => {
+  const [file] = elements.manoBundleInput.files;
+  if (file) void importBundle(file);
+});
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && mode === 'camera') void stopCamera();
+  if (event.getModifierState('Shift') && event.key === 'Delete') void clearPrivateBundle();
 });
 window.addEventListener('beforeunload', () => {
-  cancelVideoLoop?.();
+  cancelCaptureLoop?.();
+  cancelAnimationFrame(renderRequest);
   void camera.stop();
   void scheduler?.stop();
+  meshRenderer?.dispose();
 });
 
 (async function initialize() {
-  skeletonRenderer.draw([]);
   try {
-    await ensureManifest();
-    elements.liveStatus.textContent = '카메라 시작 준비 완료';
+    meshRenderer = new HandMeshRenderer(elements.mesh);
   } catch (error) {
-    console.error('Model manifest failed to load', error);
-    showPrompt('다시 시도', '모델 정보를 불러오지 못했습니다', 'error');
+    mode = 'unsupported';
+    showPrompt('WebGL2 필요', error instanceof Error ? error.message : '이 브라우저는 손 표면 렌더링을 지원하지 않습니다', 'error');
+    return;
+  }
+  renderRequest = requestAnimationFrame(renderLoop);
+  try {
+    manoBundle = await bundleStore.load();
+    if (manoBundle) {
+      meshRenderer.setBundle(manoBundle);
+      mode = 'idle';
+      cameraPrompt('저장된 MANO 모델을 사용합니다');
+    } else {
+      mode = 'bundle';
+      bundlePrompt();
+    }
+    await ensureManifest();
+  } catch (error) {
+    console.error('Initialization failed', error);
+    mode = manoBundle ? 'idle' : 'bundle';
+    showPrompt('다시 시도', error instanceof Error ? error.message : '초기화에 실패했습니다', 'error');
   }
 })();
