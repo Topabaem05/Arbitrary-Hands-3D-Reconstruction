@@ -4,25 +4,33 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
-  <meta name="description" content="로컬 MANO 메시와 WebGPU 손 추론을 사용하는 실시간 브라우저 화면입니다.">
-  <title>ACR Hand Lab — MANO Web</title>
+  <meta name="description" content="로컬 리깅 GLB와 WebGPU 손 추론을 사용하는 실시간 브라우저 화면입니다.">
+  <title>ACR Hand Lab — Rigged Hand</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="./styles.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/"
+    }
+  }
+  </script>
 </head>
 <body>
-  <main class="hand-stage" aria-label="실시간 MANO 손 모델">
-    <canvas id="meshCanvas" aria-label="드래그해 회전할 수 있는 MANO 손 표면"></canvas>
+  <main class="hand-stage" aria-label="실시간 리깅 손 모델">
+    <canvas id="meshCanvas" aria-label="드래그해 회전할 수 있는 리깅 손 표면"></canvas>
 
     <aside id="cameraPip" class="cam-pip" aria-label="카메라 미리보기" hidden>
       <video id="cameraVideo" playsinline muted aria-hidden="true"></video>
       <canvas id="overlayCanvas" aria-label="손 관절이 표시된 카메라 미리보기"></canvas>
     </aside>
 
-    <input id="manoBundleInput" type="file" accept=".json,application/json" hidden>
+    <input id="riggedHandInput" type="file" accept=".glb,model/gltf-binary,application/octet-stream" hidden>
 
     <button id="startCamera" class="start-overlay" type="button">
-      <span id="startLabel" class="start-title">MANO 모델 확인 중</span>
-      <span id="startDetail" class="start-detail">로컬 데이터만 사용합니다</span>
+      <span id="startLabel" class="start-title">리깅 손 모델 확인 중</span>
+      <span id="startDetail" class="start-detail">로컬 GLB만 사용합니다</span>
     </button>
 
     <div id="liveStatus" class="sr-only" role="status" aria-live="polite">초기화 중</div>
