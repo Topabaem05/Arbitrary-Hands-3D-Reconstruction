@@ -6,6 +6,9 @@ import { OverlayRenderer } from './src/renderer.js';
 import { WebGpuHandTracker, loadModelManifest } from './src/runtime.js';
 import { LatestFrameScheduler } from './src/scheduler.js';
 
+export const ACR_RIG_BUILD = 'rigged-v3-2026-08-05';
+console.info('ACR rigged hand build', ACR_RIG_BUILD);
+
 const elements = {
   video: document.querySelector('#cameraVideo'),
   overlay: document.querySelector('#overlayCanvas'),
@@ -61,16 +64,12 @@ function assetPrompt(detail = `LOD${lod} 리깅 GLB를 선택하세요`) {
   showPrompt('리깅 손 모델 불러오기', detail);
 }
 
-function cameraPrompt(
-  detail = 'WebGPU 추론과 GPU bone skinning이 이 브라우저 안에서만 실행됩니다',
-) {
+function cameraPrompt(detail = 'WebGPU 추론과 GPU bone skinning이 이 브라우저 안에서만 실행됩니다') {
   showPrompt('카메라 시작', detail);
 }
 
 function errorMessage(error) {
-  if (error?.name === 'NotAllowedError') {
-    return '브라우저 카메라 권한을 허용한 뒤 다시 누르세요';
-  }
+  if (error?.name === 'NotAllowedError') return '브라우저 카메라 권한을 허용한 뒤 다시 누르세요';
   if (error?.name === 'NotFoundError') return '사용할 수 있는 카메라를 찾지 못했습니다';
   return error instanceof Error ? error.message : '카메라 또는 모델을 시작하지 못했습니다';
 }
@@ -114,11 +113,7 @@ function updateLatestInference(now) {
   latestGeneration = scheduled.generation;
   if (scheduled.error) {
     console.error('WebGPU hand inference failed', scheduled.error);
-    void stopCamera({
-      title: '다시 시도',
-      detail: '실시간 손 추론 중 오류가 발생했습니다',
-      level: 'error',
-    });
+    void stopCamera({ title: '다시 시도', detail: '실시간 손 추론 중 오류가 발생했습니다', level: 'error' });
     return;
   }
   latestResult = scheduled.value;
@@ -135,9 +130,7 @@ function renderLoop(now) {
   }
   performanceMetrics.recordRender(performance.now() - started);
   const report = performanceMetrics.sample(now);
-  if (report) {
-    console.info('ACR M1 rig performance', { lod, maxHands, debugBones, ...report });
-  }
+  if (report) console.info('ACR M1 rig performance', { lod, maxHands, debugBones, ...report });
   renderRequest = requestAnimationFrame(renderLoop);
 }
 
@@ -175,7 +168,7 @@ async function startCamera() {
   try {
     await Promise.all([camera.start(), loadTracker()]);
     tracker.reset();
-    rigRenderer.reset();
+    rigRenderer.reset({ showRestPose: false });
     latestResult = null;
     latestGeneration = scheduler?.latest?.generation || 0;
     elements.pip.hidden = false;
@@ -197,17 +190,10 @@ async function stopCamera({ title = '카메라 시작', detail, level = 'idle' }
   await camera.stop();
   elements.pip.hidden = true;
   latestResult = null;
-  rigRenderer?.reset();
+  rigRenderer?.showRestPose();
   mode = riggedAsset ? 'idle' : 'asset';
-  if (riggedAsset) {
-    showPrompt(
-      title,
-      detail || 'WebGPU 추론과 GPU bone skinning이 이 브라우저 안에서만 실행됩니다',
-      level,
-    );
-  } else {
-    assetPrompt();
-  }
+  if (riggedAsset) showPrompt(title, detail || 'WebGPU 추론과 GPU bone skinning이 이 브라우저 안에서만 실행됩니다', level);
+  else assetPrompt();
 }
 
 async function importAsset(file) {
@@ -216,19 +202,14 @@ async function importAsset(file) {
   try {
     const candidate = await readGlbFile(file);
     const metadata = await rigRenderer.load(candidate.bytes.slice(0));
+    rigRenderer.showRestPose();
     riggedAsset = await assetStore.save(candidate);
     mode = 'idle';
-    cameraPrompt(
-      `${riggedAsset.name} · ${Math.round(metadata.triangleCount).toLocaleString()} triangles · ${metadata.boneCount} bones`,
-    );
+    cameraPrompt(`${riggedAsset.name} · ${Math.round(metadata.triangleCount).toLocaleString()} triangles · ${metadata.boneCount} bones`);
   } catch (error) {
     console.error('Rigged GLB import failed', error);
     mode = 'asset';
-    showPrompt(
-      '다시 선택',
-      error instanceof Error ? error.message : '리깅 GLB를 읽지 못했습니다',
-      'error',
-    );
+    showPrompt('다시 선택', error instanceof Error ? error.message : '리깅 GLB를 읽지 못했습니다', 'error');
   } finally {
     elements.riggedHandInput.value = '';
   }
@@ -238,7 +219,7 @@ async function clearPrivateAsset() {
   await stopCamera();
   await assetStore.clear();
   riggedAsset = null;
-  rigRenderer?.reset();
+  rigRenderer?.reset({ showRestPose: false });
   mode = 'asset';
   assetPrompt('저장된 로컬 리깅 모델을 삭제했습니다');
 }
@@ -250,9 +231,7 @@ elements.riggedHandInput.addEventListener('change', () => {
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && mode === 'camera') void stopCamera();
-  if (event.getModifierState('Shift') && event.key === 'Delete') {
-    void clearPrivateAsset();
-  }
+  if (event.getModifierState('Shift') && event.key === 'Delete') void clearPrivateAsset();
 });
 window.addEventListener('beforeunload', () => {
   cancelCaptureLoop?.();
@@ -267,11 +246,7 @@ window.addEventListener('beforeunload', () => {
     rigRenderer = new RiggedHandRenderer(elements.mesh, { maxHands, debugBones });
   } catch (error) {
     mode = 'unsupported';
-    showPrompt(
-      'WebGL2 필요',
-      error instanceof Error ? error.message : '이 브라우저는 리깅 손 렌더링을 지원하지 않습니다',
-      'error',
-    );
+    showPrompt('WebGL2 필요', error instanceof Error ? error.message : '이 브라우저는 리깅 손 렌더링을 지원하지 않습니다', 'error');
     return;
   }
   renderRequest = requestAnimationFrame(renderLoop);
@@ -279,10 +254,9 @@ window.addEventListener('beforeunload', () => {
     riggedAsset = await assetStore.load();
     if (riggedAsset) {
       const metadata = await rigRenderer.load(riggedAsset.bytes.slice(0));
+      rigRenderer.showRestPose();
       mode = 'idle';
-      cameraPrompt(
-        `저장된 LOD${lod} 모델 · ${Math.round(metadata.triangleCount).toLocaleString()} triangles`,
-      );
+      cameraPrompt(`저장된 LOD${lod} 모델 · ${Math.round(metadata.triangleCount).toLocaleString()} triangles`);
     } else {
       mode = 'asset';
       assetPrompt();
@@ -293,10 +267,6 @@ window.addEventListener('beforeunload', () => {
     await assetStore.clear().catch(() => {});
     riggedAsset = null;
     mode = 'asset';
-    showPrompt(
-      '다시 선택',
-      error instanceof Error ? error.message : '초기화에 실패했습니다',
-      'error',
-    );
+    showPrompt('다시 선택', error instanceof Error ? error.message : '초기화에 실패했습니다', 'error');
   }
 })();
