@@ -39,10 +39,19 @@ export class CameraController {
   }
 }
 
-export async function loadImageFile(file) {
-  if (!file?.type?.startsWith('image/')) throw new TypeError('Select an image file.');
-  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
-  return bitmap;
+export async function captureVideoFrame(video) {
+  if (typeof VideoFrame === 'function') {
+    let frame = null;
+    try {
+      frame = new VideoFrame(video, { timestamp: Math.round(performance.now() * 1000) });
+      return await createImageBitmap(frame);
+    } catch {
+      // Fall through to the broadly supported ImageBitmap path.
+    } finally {
+      frame?.close?.();
+    }
+  }
+  return createImageBitmap(video);
 }
 
 export function scheduleVideoFrames(video, callback) {
