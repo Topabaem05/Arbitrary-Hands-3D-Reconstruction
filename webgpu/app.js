@@ -1,6 +1,6 @@
 import { CameraController, captureVideoFrame, scheduleVideoFrames } from './src/camera.js';
-import { loadManoBundleFile, ManoBundleStore } from './src/mano-bundle.js';
-import { HandMeshRenderer } from './src/mesh-renderer.js';
+import { RiggedAssetStore, readGlbFile } from './src/rigged-asset-store.js';
+import { RiggedHandRenderer } from './src/rigged-hand-renderer.js';
 import { RuntimePerformance } from './src/performance.js';
 import { OverlayRenderer } from './src/renderer.js';
 import { WebGpuHandTracker, loadModelManifest } from './src/runtime.js';
@@ -14,18 +14,21 @@ const elements = {
   start: document.querySelector('#startCamera'),
   startLabel: document.querySelector('#startLabel'),
   startDetail: document.querySelector('#startDetail'),
-  manoBundleInput: document.querySelector('#manoBundleInput'),
+  riggedHandInput: document.querySelector('#riggedHandInput'),
   liveStatus: document.querySelector('#liveStatus'),
 };
 
+const params = new URLSearchParams(location.search);
+const maxHands = params.get('hands') === '2' ? 2 : 1;
+const lod = params.get('lod') === '1' ? 1 : 0;
+const debugBones = params.get('debugBones') === '1';
 const overlayRenderer = new OverlayRenderer(elements.overlay, { mirrored: true });
 const camera = new CameraController(elements.video);
-const bundleStore = new ManoBundleStore();
-const maxHands = new URLSearchParams(location.search).get('hands') === '2' ? 2 : 1;
+const assetStore = new RiggedAssetStore({ key: `rigged-hand-glb-v1:lod${lod}` });
 const performanceMetrics = new RuntimePerformance({ windowMs: 5000 });
 
-let meshRenderer = null;
-let manoBundle = null;
+let rigRenderer = null;
+let riggedAsset = null;
 let manifest = null;
 let tracker = null;
 let scheduler = null;
@@ -54,16 +57,20 @@ function hidePrompt(message) {
   elements.liveStatus.textContent = message;
 }
 
-function bundlePrompt() {
-  showPrompt('MANO 모델 불러오기', '로컬 변환한 mano-browser-bundle.json을 선택하세요');
+function assetPrompt(detail = `LOD${lod} 리깅 GLB를 선택하세요`) {
+  showPrompt('리깅 손 모델 불러오기', detail);
 }
 
-function cameraPrompt(detail = 'WebGPU 추론과 MANO 메시가 이 브라우저 안에서만 실행됩니다') {
+function cameraPrompt(
+  detail = 'WebGPU 추론과 GPU bone skinning이 이 브라우저 안에서만 실행됩니다',
+) {
   showPrompt('카메라 시작', detail);
 }
 
 function errorMessage(error) {
-  if (error?.name === 'NotAllowedError') return '브라우저 카메라 권한을 허용한 뒤 다시 누르세요';
+  if (error?.name === 'NotAllowedError') {
+    return '브라우저 카메라 권한을 허용한 뒤 다시 누르세요';
+  }
   if (error?.name === 'NotFoundError') return '사용할 수 있는 카메라를 찾지 못했습니다';
   return error instanceof Error ? error.message : '카메라 또는 모델을 시작하지 못했습니다';
 }
@@ -107,24 +114,30 @@ function updateLatestInference(now) {
   latestGeneration = scheduled.generation;
   if (scheduled.error) {
     console.error('WebGPU hand inference failed', scheduled.error);
-    void stopCamera({ title: '다시 시도', detail: '실시간 손 추론 중 오류가 발생했습니다', level: 'error' });
+    void stopCamera({
+      title: '다시 시도',
+      detail: '실시간 손 추론 중 오류가 발생했습니다',
+      level: 'error',
+    });
     return;
   }
   latestResult = scheduled.value;
   performanceMetrics.recordInference(latestResult?.timing, scheduled.duration * 1000);
-  meshRenderer?.updateHands(latestResult?.hands || [], now);
+  rigRenderer?.setHands(latestResult?.hands || [], now);
 }
 
 function renderLoop(now) {
-  const renderStarted = performance.now();
+  const started = performance.now();
   updateLatestInference(now);
-  meshRenderer?.render(now);
+  rigRenderer?.render(now);
   if (mode === 'camera' && elements.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-    overlayRenderer.draw(elements.video, latestResult?.hands || []);
+    overlayRenderer.draw(elements.video, latestResult?.hands || [], { showStats: false });
   }
-  performanceMetrics.recordRender(performance.now() - renderStarted);
+  performanceMetrics.recordRender(performance.now() - started);
   const report = performanceMetrics.sample(now);
-  if (report) console.info('ACR M1 performance', report);
+  if (report) {
+    console.info('ACR M1 rig performance', { lod, maxHands, debugBones, ...report });
+  }
   renderRequest = requestAnimationFrame(renderLoop);
 }
 
@@ -133,9 +146,9 @@ async function submitCurrentVideoFrame() {
   if (!(elements.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)) return;
   snapshotPending = true;
   try {
-    const captureStarted = performance.now();
+    const started = performance.now();
     const frame = await captureVideoFrame(elements.video);
-    performanceMetrics.recordCapture(performance.now() - captureStarted);
+    performanceMetrics.recordCapture(performance.now() - started);
     scheduler.submit(frame);
   } catch (error) {
     console.error('Camera snapshot failed', error);
@@ -152,8 +165,8 @@ function startCaptureLoop() {
 }
 
 async function startCamera() {
-  if (!manoBundle) {
-    elements.manoBundleInput.click();
+  if (!riggedAsset) {
+    elements.riggedHandInput.click();
     return;
   }
   if (mode !== 'idle') return;
@@ -162,12 +175,12 @@ async function startCamera() {
   try {
     await Promise.all([camera.start(), loadTracker()]);
     tracker.reset();
-    meshRenderer.resetTracking();
+    rigRenderer.reset();
     latestResult = null;
     latestGeneration = scheduler?.latest?.generation || 0;
     elements.pip.hidden = false;
     mode = 'camera';
-    hidePrompt('카메라와 MANO 메시 실행 중');
+    hidePrompt('카메라와 리깅 손 모델 실행 중');
     startCaptureLoop();
   } catch (error) {
     console.error('Unable to start camera experience', error);
@@ -184,80 +197,106 @@ async function stopCamera({ title = '카메라 시작', detail, level = 'idle' }
   await camera.stop();
   elements.pip.hidden = true;
   latestResult = null;
-  meshRenderer?.resetTracking();
-  mode = manoBundle ? 'idle' : 'bundle';
-  if (manoBundle) showPrompt(title, detail || 'WebGPU 추론과 MANO 메시가 이 브라우저 안에서만 실행됩니다', level);
-  else bundlePrompt();
-}
-
-async function importBundle(file) {
-  mode = 'loading';
-  showPrompt('MANO 모델 확인 중', '파일 구조와 메시 데이터를 검사하고 있습니다', 'working');
-  try {
-    const bundle = await loadManoBundleFile(file);
-    await bundleStore.save(bundle);
-    manoBundle = bundle;
-    meshRenderer.setBundle(bundle);
-    mode = 'idle';
-    cameraPrompt('MANO 모델이 이 브라우저에 저장되었습니다');
-  } catch (error) {
-    console.error('MANO bundle import failed', error);
-    mode = 'bundle';
-    showPrompt('다시 선택', error instanceof Error ? error.message : 'MANO 번들을 읽지 못했습니다', 'error');
-  } finally {
-    elements.manoBundleInput.value = '';
+  rigRenderer?.reset();
+  mode = riggedAsset ? 'idle' : 'asset';
+  if (riggedAsset) {
+    showPrompt(
+      title,
+      detail || 'WebGPU 추론과 GPU bone skinning이 이 브라우저 안에서만 실행됩니다',
+      level,
+    );
+  } else {
+    assetPrompt();
   }
 }
 
-async function clearPrivateBundle() {
+async function importAsset(file) {
+  mode = 'loading';
+  showPrompt('리깅 모델 확인 중', 'GLB와 21개 bone 구조를 검사하고 있습니다', 'working');
+  try {
+    const candidate = await readGlbFile(file);
+    const metadata = await rigRenderer.load(candidate.bytes.slice(0));
+    riggedAsset = await assetStore.save(candidate);
+    mode = 'idle';
+    cameraPrompt(
+      `${riggedAsset.name} · ${Math.round(metadata.triangleCount).toLocaleString()} triangles · ${metadata.boneCount} bones`,
+    );
+  } catch (error) {
+    console.error('Rigged GLB import failed', error);
+    mode = 'asset';
+    showPrompt(
+      '다시 선택',
+      error instanceof Error ? error.message : '리깅 GLB를 읽지 못했습니다',
+      'error',
+    );
+  } finally {
+    elements.riggedHandInput.value = '';
+  }
+}
+
+async function clearPrivateAsset() {
   await stopCamera();
-  await bundleStore.clear();
-  manoBundle = null;
-  meshRenderer?.setBundle(null);
-  mode = 'bundle';
-  bundlePrompt();
+  await assetStore.clear();
+  riggedAsset = null;
+  rigRenderer?.reset();
+  mode = 'asset';
+  assetPrompt('저장된 로컬 리깅 모델을 삭제했습니다');
 }
 
 elements.start.addEventListener('click', () => void startCamera());
-elements.manoBundleInput.addEventListener('change', () => {
-  const [file] = elements.manoBundleInput.files;
-  if (file) void importBundle(file);
+elements.riggedHandInput.addEventListener('change', () => {
+  const [file] = elements.riggedHandInput.files;
+  if (file) void importAsset(file);
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && mode === 'camera') void stopCamera();
-  if (event.getModifierState('Shift') && event.key === 'Delete') void clearPrivateBundle();
+  if (event.getModifierState('Shift') && event.key === 'Delete') {
+    void clearPrivateAsset();
+  }
 });
 window.addEventListener('beforeunload', () => {
   cancelCaptureLoop?.();
   cancelAnimationFrame(renderRequest);
   void camera.stop();
   void scheduler?.stop();
-  meshRenderer?.dispose();
+  rigRenderer?.dispose();
 });
 
 (async function initialize() {
   try {
-    meshRenderer = new HandMeshRenderer(elements.mesh);
+    rigRenderer = new RiggedHandRenderer(elements.mesh, { maxHands, debugBones });
   } catch (error) {
     mode = 'unsupported';
-    showPrompt('WebGL2 필요', error instanceof Error ? error.message : '이 브라우저는 손 표면 렌더링을 지원하지 않습니다', 'error');
+    showPrompt(
+      'WebGL2 필요',
+      error instanceof Error ? error.message : '이 브라우저는 리깅 손 렌더링을 지원하지 않습니다',
+      'error',
+    );
     return;
   }
   renderRequest = requestAnimationFrame(renderLoop);
   try {
-    manoBundle = await bundleStore.load();
-    if (manoBundle) {
-      meshRenderer.setBundle(manoBundle);
+    riggedAsset = await assetStore.load();
+    if (riggedAsset) {
+      const metadata = await rigRenderer.load(riggedAsset.bytes.slice(0));
       mode = 'idle';
-      cameraPrompt('저장된 MANO 모델을 사용합니다');
+      cameraPrompt(
+        `저장된 LOD${lod} 모델 · ${Math.round(metadata.triangleCount).toLocaleString()} triangles`,
+      );
     } else {
-      mode = 'bundle';
-      bundlePrompt();
+      mode = 'asset';
+      assetPrompt();
     }
     await ensureManifest();
   } catch (error) {
     console.error('Initialization failed', error);
-    mode = manoBundle ? 'idle' : 'bundle';
-    showPrompt('다시 시도', error instanceof Error ? error.message : '초기화에 실패했습니다', 'error');
+    await assetStore.clear().catch(() => {});
+    riggedAsset = null;
+    mode = 'asset';
+    showPrompt(
+      '다시 선택',
+      error instanceof Error ? error.message : '초기화에 실패했습니다',
+      'error',
+    );
   }
 })();
