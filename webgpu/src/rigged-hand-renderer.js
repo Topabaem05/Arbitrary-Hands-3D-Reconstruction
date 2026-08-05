@@ -26,19 +26,13 @@ export function validateRiggedHand(root) {
   const { mesh, bones } = findRigParts(root);
   if (!mesh) throw new TypeError('Rigged hand GLB must contain a SkinnedMesh.');
   const missing = BONE_NAMES.filter((name) => !bones.has(name));
-  if (missing.length > 0) {
-    throw new TypeError(`Missing required hand bones: ${missing.join(', ')}`);
-  }
+  if (missing.length > 0) throw new TypeError(`Missing required hand bones: ${missing.join(', ')}`);
   const skinIndex = mesh.geometry.getAttribute('skinIndex');
   const skinWeight = mesh.geometry.getAttribute('skinWeight');
   if (!skinIndex || skinIndex.itemSize !== 4 || !skinWeight || skinWeight.itemSize !== 4) {
-    throw new TypeError(
-      'Rigged hand mesh must contain four-component skinIndex and skinWeight attributes.',
-    );
+    throw new TypeError('Rigged hand mesh must contain four-component skinIndex and skinWeight attributes.');
   }
-  if (!mesh.skeleton || mesh.skeleton.bones.length < 21) {
-    throw new TypeError('Rigged hand skin is incomplete.');
-  }
+  if (!mesh.skeleton || mesh.skeleton.bones.length < 21) throw new TypeError('Rigged hand skin is incomplete.');
   return { mesh, bones };
 }
 
@@ -91,10 +85,20 @@ function overrideMaterials(root) {
     if (object.isSkinnedMesh) {
       const values = Array.isArray(object.material) ? object.material : [object.material];
       for (const value of values) if (value) oldMaterials.add(value);
+      material.transparent = false;
+      material.opacity = 1;
+      material.depthWrite = true;
       object.material = material;
+      object.visible = true;
       object.frustumCulled = false;
       object.castShadow = false;
       object.receiveShadow = false;
+      object.normalizeSkinWeights();
+      object.geometry.computeBoundingSphere();
+      if (!Number.isFinite(object.geometry.boundingSphere?.radius)
+          || !(object.geometry.boundingSphere.radius > 0)) {
+        throw new TypeError('Rigged hand mesh has no visible geometry bounds.');
+      }
     }
   });
   for (const oldMaterial of oldMaterials) oldMaterial.dispose?.();
@@ -104,9 +108,7 @@ function makeRigInstance(template, baseScale, debugBones) {
   const root = SkeletonUtils.clone(template);
   const { mesh, bones } = validateRiggedHand(root);
   const restPositions = restPositionsFor(root, bones);
-  const restQuaternions = new Map(
-    BONE_NAMES.map((name) => [name, bones.get(name).quaternion.clone()]),
-  );
+  const restQuaternions = new Map(BONE_NAMES.map((name) => [name, bones.get(name).quaternion.clone()]));
   const modelGroup = new THREE.Group();
   modelGroup.name = 'RiggedHandModel';
   modelGroup.scale.setScalar(baseScale);
@@ -115,7 +117,7 @@ function makeRigInstance(template, baseScale, debugBones) {
   poseGroup.name = 'RiggedHandPose';
   poseGroup.add(modelGroup);
   const slotGroup = new THREE.Group();
-  slotGroup.visible = false;
+  slotGroup.visible = true;
   slotGroup.add(poseGroup);
   const helper = debugBones ? new THREE.SkeletonHelper(root) : null;
   if (helper) {
@@ -136,6 +138,7 @@ function makeRigInstance(template, baseScale, debugBones) {
     handedness: 'left',
     lastTargetTime: -Infinity,
     helper,
+    previewMode: true,
   };
 }
 
@@ -145,12 +148,7 @@ export class RiggedHandRenderer {
     this.canvas = canvas;
     this.maxHands = Math.max(1, Math.min(2, Number(maxHands) || 1));
     this.debugBones = Boolean(debugBones);
-    this.renderer = new THREE.WebGLRenderer({
-      canvas,
-      antialias: true,
-      alpha: false,
-      powerPreference: 'high-performance',
-    });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
     this.renderer.setClearColor(0x000000, 1);
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -198,10 +196,7 @@ export class RiggedHandRenderer {
       this.viewGroup.rotation.x += (event.clientY - this.lastPointer.y) * 0.008;
       this.lastPointer = { x: event.clientX, y: event.clientY };
     });
-    const stop = () => {
-      this.dragging = false;
-      this.lastPointer = null;
-    };
+    const stop = () => { this.dragging = false; this.lastPointer = null; };
     this.canvas.addEventListener('pointerup', stop);
     this.canvas.addEventListener('pointercancel', stop);
   }
@@ -236,21 +231,13 @@ export class RiggedHandRenderer {
     this.template = gltf.scene;
     this.slots = [];
     for (let index = 0; index < this.maxHands; index += 1) {
-      const slot = makeRigInstance(
-        this.template,
-        baseScale * (this.maxHands === 2 ? 0.78 : 1),
-        this.debugBones,
-      );
-      slot.slotGroup.position.x = this.maxHands === 2
-        ? (index === 0 ? -1.25 : 1.25)
-        : 0;
+      const slot = makeRigInstance(this.template, baseScale * (this.maxHands === 2 ? 0.78 : 1), this.debugBones);
+      slot.slotGroup.position.x = this.maxHands === 2 ? (index === 0 ? -1.25 : 1.25) : 0;
       this.slots.push(slot);
       this.viewGroup.add(slot.slotGroup);
     }
-    return {
-      triangleCount: this.slots[0].mesh.geometry.index?.count / 3 || 0,
-      boneCount: BONE_NAMES.length,
-    };
+    this.showRestPose();
+    return { triangleCount: this.slots[0].mesh.geometry.index?.count / 3 || 0, boneCount: BONE_NAMES.length };
   }
 
   setHands(hands = [], timestamp = performance.now()) {
@@ -259,6 +246,7 @@ export class RiggedHandRenderer {
       const hand = hands[index];
       if (!hand) continue;
       slot.handedness = hand.handedness || 'left';
+      slot.previewMode = false;
       slot.smoother.setTarget(landmarksFromHand(hand), timestamp);
       slot.lastTargetTime = timestamp;
       slot.slotGroup.visible = true;
@@ -266,6 +254,7 @@ export class RiggedHandRenderer {
   }
 
   applySlotPose(slot, timestamp) {
+    if (slot.previewMode) return;
     if (timestamp - slot.lastTargetTime > 350) {
       slot.slotGroup.visible = false;
       return;
@@ -297,11 +286,34 @@ export class RiggedHandRenderer {
     this.renderer.render(this.scene, this.camera);
   }
 
-  reset() {
+  showRestPose() {
     for (const slot of this.slots) {
       slot.smoother.reset();
+      slot.previewMode = true;
+      slot.slotGroup.visible = true;
+      slot.lastTargetTime = -Infinity;
+      slot.poseGroup.quaternion.identity();
+      slot.modelGroup.scale.y = Math.abs(slot.modelGroup.scale.y);
+      for (const name of BONE_NAMES) {
+        slot.bones.get(name).quaternion.copy(slot.restQuaternions.get(name));
+      }
+      slot.root.updateMatrixWorld(true);
+      slot.helper?.update();
+    }
+  }
+
+  reset({ showRestPose = true } = {}) {
+    if (showRestPose) {
+      this.showRestPose();
+      return;
+    }
+    for (const slot of this.slots) {
+      slot.smoother.reset();
+      slot.previewMode = false;
       slot.slotGroup.visible = false;
       slot.lastTargetTime = -Infinity;
+      slot.poseGroup.quaternion.identity();
+      slot.modelGroup.scale.y = Math.abs(slot.modelGroup.scale.y);
       for (const name of BONE_NAMES) {
         slot.bones.get(name).quaternion.copy(slot.restQuaternions.get(name));
       }
