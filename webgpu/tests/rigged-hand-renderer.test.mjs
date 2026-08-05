@@ -24,3 +24,13 @@ test('renderer is persistent, black, GPU-skinned, and debug bones are optional',
   assert.doesNotMatch(source, /bufferSubData/);
   assert.doesNotMatch(source, /computeVertexNormals\(\)/);
 });
+
+test('loaded rig is shown as an opaque rest-pose surface before camera tracking', async () => {
+  const source = await read('src/rigged-hand-renderer.js');
+  assert.match(source, /showRestPose\(\)/);
+  assert.match(source, /slotGroup\.visible\s*=\s*true/);
+  assert.match(source, /object\.visible\s*=\s*true/);
+  assert.match(source, /material\.transparent\s*=\s*false/);
+  assert.match(source, /material\.opacity\s*=\s*1/);
+  assert.match(source, /reset\(\{\s*showRestPose\s*=\s*true\s*\}/);
+});
