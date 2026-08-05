@@ -35,11 +35,20 @@
       ]
     },
     {
-      "source": "/(index.html|models/manifest.json|favicon.svg)",
+      "source": "/",
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=0, must-revalidate"
+          "value": "private, no-store, max-age=0"
+        }
+      ]
+    },
+    {
+      "source": "/index.html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "private, no-store, max-age=0"
         }
       ]
     },
@@ -48,7 +57,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, stale-while-revalidate=86400"
+          "value": "private, no-store, max-age=0"
         }
       ]
     },
@@ -57,7 +66,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, stale-while-revalidate=86400"
+          "value": "private, no-store, max-age=0"
         }
       ]
     },
@@ -66,7 +75,16 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, stale-while-revalidate=86400"
+          "value": "private, no-store, max-age=0"
+        }
+      ]
+    },
+    {
+      "source": "/(models/manifest.json|favicon.svg)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
         }
       ]
     }
