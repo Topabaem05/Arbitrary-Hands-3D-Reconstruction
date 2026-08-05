@@ -1,5 +1,5 @@
 {
-  "version": "2026-08-04",
+  "version": "2026-08-05-rigged-v4-public-assets",
   "runtime": "onnxruntime-web@1.26.0",
   "models": {
     "palm": {
@@ -13,6 +13,22 @@
       "license": "Apache-2.0",
       "input": [1, 224, 224, 3],
       "url": "https://huggingface.co/opencv/handpose_estimation_mediapipe/resolve/main/handpose_estimation_mediapipe_2023feb.onnx"
+    }
+  },
+  "riggedHandAssets": {
+    "lod0": {
+      "url": "/assets/hand_rigged_v3_lod0.glb",
+      "sha256": "4e251e8237cb4c30d1c7be22be14bd516cd2d633a63f00fd159d2323d140357e",
+      "vertices": 7986,
+      "triangles": 16010,
+      "bones": 21
+    },
+    "lod1": {
+      "url": "/assets/hand_rigged_v3_lod1.glb",
+      "sha256": "4f2eba44a0de1e1f94131e9e936a6fd2ef2355919d0cdc194de9851a37527667",
+      "vertices": 3696,
+      "triangles": 7425,
+      "bones": 21
     }
   }
 }
