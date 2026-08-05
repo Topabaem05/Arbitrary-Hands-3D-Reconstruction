@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,10 +35,7 @@ BONE_PARENTS = [
     0, 13, 14, 15,
     0, 17, 18, 19,
 ]
-DEFORM_BONES = np.asarray(
-    [0, 1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19],
-    dtype=np.int32,
-)
+DEFORM_BONES = np.asarray([0, 1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19], dtype=np.int32)
 
 _COMPONENT_FLOAT = 5126
 _COMPONENT_UNSIGNED_SHORT = 5123
@@ -88,11 +86,7 @@ def load_obj(path: Path) -> tuple[np.ndarray, np.ndarray]:
     return result_vertices, result_faces
 
 
-def simplify_voxel(
-    vertices: np.ndarray,
-    faces: np.ndarray,
-    voxel_size: float,
-) -> tuple[np.ndarray, np.ndarray]:
+def simplify_voxel(vertices: np.ndarray, faces: np.ndarray, voxel_size: float) -> tuple[np.ndarray, np.ndarray]:
     if not voxel_size > 0:
         raise ValueError("voxel_size must be positive.")
     origin = vertices.min(axis=0)
@@ -143,10 +137,7 @@ def _median_z_near(vertices: np.ndarray, x: float, y: float, scale: float) -> fl
     distance2 = (vertices[:, 0] - x) ** 2 + (vertices[:, 1] - y) ** 2
     selected = vertices[distance2 <= radius * radius]
     if len(selected) < 12:
-        nearest = np.argpartition(
-            distance2,
-            min(64, len(distance2) - 1),
-        )[: min(64, len(distance2))]
+        nearest = np.argpartition(distance2, min(64, len(distance2) - 1))[: min(64, len(distance2))]
         selected = vertices[nearest]
     lower, upper = np.percentile(selected[:, 2], (10.0, 90.0))
     return float((lower + upper) * 0.5)
@@ -170,11 +161,7 @@ def place_joint_positions(vertices: np.ndarray) -> np.ndarray:
     scale = float(max(sx, sy))
 
     wrist_xy = np.asarray([x0 + sx * 0.89, y0 + sy * 0.59], dtype=np.float64)
-    wrist = np.asarray([
-        wrist_xy[0],
-        wrist_xy[1],
-        _median_z_near(vertices, *wrist_xy, scale),
-    ])
+    wrist = np.asarray([wrist_xy[0], wrist_xy[1], _median_z_near(vertices, *wrist_xy, scale)])
     positions = np.zeros((21, 3), dtype=np.float64)
     positions[0] = wrist
 
@@ -188,11 +175,7 @@ def place_joint_positions(vertices: np.ndarray) -> np.ndarray:
         y = y0 + sy * yn
         tip = _tip_from_band(vertices, y, sy * 0.075)
         base_xy = np.asarray([x0 + sx * base_xn, y], dtype=np.float64)
-        base = np.asarray([
-            base_xy[0],
-            base_xy[1],
-            _median_z_near(vertices, *base_xy, scale),
-        ])
+        base = np.asarray([base_xy[0], base_xy[1], _median_z_near(vertices, *base_xy, scale)])
         for index, ratio in zip(indices, (0.0, 0.40, 0.72, 1.0), strict=True):
             point = base * (1.0 - ratio) + tip * ratio
             point[2] = _median_z_near(vertices, float(point[0]), float(point[1]), scale)
@@ -202,9 +185,7 @@ def place_joint_positions(vertices: np.ndarray) -> np.ndarray:
     thumb_tip = _tip_from_band(vertices, thumb_y, sy * 0.13)
     thumb_base_xy = np.asarray([x0 + sx * 0.70, y0 + sy * 0.35], dtype=np.float64)
     thumb_base = np.asarray([
-        thumb_base_xy[0],
-        thumb_base_xy[1],
-        _median_z_near(vertices, *thumb_base_xy, scale),
+        thumb_base_xy[0], thumb_base_xy[1], _median_z_near(vertices, *thumb_base_xy, scale)
     ])
     for index, ratio in zip((1, 2, 3, 4), (0.0, 0.38, 0.68, 1.0), strict=True):
         point = thumb_base * (1.0 - ratio) + thumb_tip * ratio
@@ -226,10 +207,7 @@ def _segment_distance(points: np.ndarray, start: np.ndarray, end: np.ndarray) ->
     return np.linalg.norm(points - nearest, axis=1)
 
 
-def compute_skin_weights(
-    vertices: np.ndarray,
-    positions: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+def compute_skin_weights(vertices: np.ndarray, positions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     scale = float(np.max(vertices.max(axis=0) - vertices.min(axis=0)))
     sigma_finger = max(scale * 0.045, 0.3)
     sigma_root = max(scale * 0.12, 0.8)
@@ -238,10 +216,7 @@ def compute_skin_weights(
     mcp_indices = [1, 5, 9, 13, 17]
     root_distance = np.full(len(vertices), np.inf, dtype=np.float64)
     for mcp in mcp_indices:
-        root_distance = np.minimum(
-            root_distance,
-            _segment_distance(vertices, positions[0], positions[mcp]),
-        )
+        root_distance = np.minimum(root_distance, _segment_distance(vertices, positions[0], positions[mcp]))
     finger_base_x = float(np.mean(positions[mcp_indices, 0]))
     palm_extension = np.maximum(0.0, finger_base_x - vertices[:, 0])
     scores[:, 0] = np.exp(-(root_distance ** 2) / (2.0 * sigma_root ** 2)) * np.exp(
@@ -311,11 +286,7 @@ def _write_glb(
             binary.append(0)
         offset = len(binary)
         binary.extend(data)
-        view: dict[str, object] = {
-            "buffer": 0,
-            "byteOffset": offset,
-            "byteLength": len(data),
-        }
+        view: dict[str, object] = {"buffer": 0, "byteOffset": offset, "byteLength": len(data)}
         if target is not None:
             view["target"] = target
         buffer_views.append(view)
@@ -344,55 +315,25 @@ def _write_glb(
         accessors.append(accessor)
         return len(accessors) - 1
 
-    positions_accessor = add_accessor(
-        vertices.astype(np.float32),
-        component_type=_COMPONENT_FLOAT,
-        type_name="VEC3",
-        target=_ARRAY_BUFFER,
-        include_bounds=True,
-    )
-    normals_accessor = add_accessor(
-        normals.astype(np.float32),
-        component_type=_COMPONENT_FLOAT,
-        type_name="VEC3",
-        target=_ARRAY_BUFFER,
-    )
-    joints_accessor = add_accessor(
-        joints.astype(np.uint16),
-        component_type=_COMPONENT_UNSIGNED_SHORT,
-        type_name="VEC4",
-        target=_ARRAY_BUFFER,
-    )
-    weights_accessor = add_accessor(
-        weights.astype(np.float32),
-        component_type=_COMPONENT_FLOAT,
-        type_name="VEC4",
-        target=_ARRAY_BUFFER,
-    )
+    positions_accessor = add_accessor(vertices.astype(np.float32), component_type=_COMPONENT_FLOAT, type_name="VEC3", target=_ARRAY_BUFFER, include_bounds=True)
+    normals_accessor = add_accessor(normals.astype(np.float32), component_type=_COMPONENT_FLOAT, type_name="VEC3", target=_ARRAY_BUFFER)
+    joints_accessor = add_accessor(joints.astype(np.uint16), component_type=_COMPONENT_UNSIGNED_SHORT, type_name="VEC4", target=_ARRAY_BUFFER)
+    weights_accessor = add_accessor(weights.astype(np.float32), component_type=_COMPONENT_FLOAT, type_name="VEC4", target=_ARRAY_BUFFER)
     if len(vertices) <= 65535:
         index_array = faces.astype(np.uint16).reshape(-1)
         index_component = _COMPONENT_UNSIGNED_SHORT
     else:
         index_array = faces.astype(np.uint32).reshape(-1)
         index_component = _COMPONENT_UNSIGNED_INT
-    indices_accessor = add_accessor(
-        index_array,
-        component_type=index_component,
-        type_name="SCALAR",
-        target=_ELEMENT_ARRAY_BUFFER,
-    )
-    inverse_binds = np.asarray(
-        [_inverse_translation_matrix(position) for position in positions],
-        dtype=np.float32,
-    )
-    inverse_accessor = add_accessor(
-        inverse_binds,
-        component_type=_COMPONENT_FLOAT,
-        type_name="MAT4",
-    )
+    indices_accessor = add_accessor(index_array, component_type=index_component, type_name="SCALAR", target=_ELEMENT_ARRAY_BUFFER)
+    inverse_binds = np.asarray([_inverse_translation_matrix(position) for position in positions], dtype=np.float32)
+    inverse_accessor = add_accessor(inverse_binds, component_type=_COMPONENT_FLOAT, type_name="MAT4")
 
-    nodes: list[dict] = [{"name": "HandMesh", "mesh": 0, "skin": 0}]
-    joint_node_indices = list(range(1, 22))
+    nodes: list[dict] = [
+        {"name": "Armature", "children": [1, 2]},
+        {"name": "HandMesh", "mesh": 0, "skin": 0},
+    ]
+    joint_node_indices = list(range(2, 23))
     for index, (name, parent) in enumerate(zip(BONE_NAMES, BONE_PARENTS, strict=True)):
         translation = positions[index] if parent < 0 else positions[index] - positions[parent]
         children = [
@@ -412,7 +353,7 @@ def _write_glb(
     document = {
         "asset": {"version": "2.0", "generator": "ACR rig_hand_obj_to_glb"},
         "scene": 0,
-        "scenes": [{"nodes": [0, 1]}],
+        "scenes": [{"nodes": [0]}],
         "nodes": nodes,
         "meshes": [{
             "name": "RiggedHand",
@@ -430,7 +371,7 @@ def _write_glb(
         "skins": [{
             "name": "MediaPipeHandSkin",
             "inverseBindMatrices": inverse_accessor,
-            "skeleton": 1,
+            "skeleton": 2,
             "joints": joint_node_indices,
         }],
         "materials": [{
@@ -451,10 +392,7 @@ def _write_glb(
             "sourceAxis": {"fingers": "-X", "thumb": "-Y", "normal": "+Z"},
         },
     }
-    json_chunk = _pad4(
-        json.dumps(document, separators=(",", ":")).encode("utf-8"),
-        b" ",
-    )
+    json_chunk = _pad4(json.dumps(document, separators=(",", ":")).encode("utf-8"), b" ")
     bin_chunk = _pad4(bytes(binary), b"\x00")
     total_length = 12 + 8 + len(json_chunk) + 8 + len(bin_chunk)
     output = bytearray(struct.pack("<4sII", b"glTF", 2, total_length))
@@ -481,11 +419,7 @@ def parse_glb(path: Path) -> dict:
     return json.loads(raw[20:20 + json_length].decode("utf-8").rstrip(" \x00"))
 
 
-def build_rigged_hand(
-    obj_path: Path,
-    output_path: Path,
-    voxel_size: float,
-) -> RigReport:
+def build_rigged_hand(obj_path: Path, output_path: Path, voxel_size: float) -> RigReport:
     vertices, faces = load_obj(obj_path)
     vertices, faces = simplify_voxel(vertices, faces, voxel_size)
     normals = compute_vertex_normals(vertices, faces)
@@ -531,15 +465,9 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
     report = build_rigged_hand(args.input, args.output, args.voxel_size)
     report_path = args.report or args.output.with_suffix(args.output.suffix + ".json")
-    report_path.write_text(
-        json.dumps(_report_json(report, args.voxel_size), indent=2) + "\n",
-        encoding="utf-8",
-    )
+    report_path.write_text(json.dumps(_report_json(report, args.voxel_size), indent=2) + "\n", encoding="utf-8")
     print(f"GLB: {args.output} ({args.output.stat().st_size / 1024:.1f} KiB)")
-    print(
-        f"Vertices: {report.vertex_count}; triangles: {report.triangle_count}; "
-        f"bones: {report.bone_count}"
-    )
+    print(f"Vertices: {report.vertex_count}; triangles: {report.triangle_count}; bones: {report.bone_count}")
     print(f"Report: {report_path}")
     return 0
 
