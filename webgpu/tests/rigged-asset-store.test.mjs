@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   RiggedAssetStore,
   createMemoryRiggedAssetStore,
+  fetchRiggedAsset,
+  resolveBundledAssetUrl,
   validateGlbHeader,
 } from '../src/rigged-asset-store.js';
 
@@ -31,6 +33,53 @@ test('validates the GLB 2.0 header and declared byte length', () => {
   assert.throws(() => validateGlbHeader(invalid), /declared length/i);
 });
 
+test('derives the public Vercel asset URL from the LOD storage key', () => {
+  assert.equal(
+    resolveBundledAssetUrl({ key: 'rigged-hand-glb-v1:lod0', origin: 'https://app.example' }),
+    'https://app.example/assets/hand_rigged_v3_lod0.glb',
+  );
+  assert.equal(
+    resolveBundledAssetUrl({ key: 'rigged-hand-glb-v1:lod1', origin: 'https://app.example' }),
+    'https://app.example/assets/hand_rigged_v3_lod1.glb',
+  );
+});
+
+test('loads the bundled GLB when no local override exists', async () => {
+  const bytes = glbBytes();
+  const requests = [];
+  const store = createMemoryRiggedAssetStore({
+    key: 'lod0',
+    fallbackUrl: 'https://app.example/assets/hand_rigged_v3_lod0.glb',
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return { ok: true, status: 200, async arrayBuffer() { return bytes; } };
+    },
+  });
+  const loaded = await store.load();
+  assert.equal(loaded.source, 'bundled');
+  assert.equal(loaded.name, 'hand_rigged_v3_lod0.glb');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.cache, 'force-cache');
+});
+
+test('a saved local GLB overrides the bundled default', async () => {
+  const bytes = glbBytes();
+  let fetchCount = 0;
+  const store = createMemoryRiggedAssetStore({
+    key: 'lod0',
+    fallbackUrl: '/assets/default.glb',
+    fetchImpl: async () => {
+      fetchCount += 1;
+      return { ok: true, status: 200, async arrayBuffer() { return bytes; } };
+    },
+  });
+  await store.save({ name: 'custom.glb', bytes, importedAt: 1 });
+  const loaded = await store.load();
+  assert.equal(loaded.source, 'local');
+  assert.equal(loaded.name, 'custom.glb');
+  assert.equal(fetchCount, 0);
+});
+
 test('memory asset store clones bytes on save and load', async () => {
   const store = createMemoryRiggedAssetStore({ key: 'lod0' });
   const bytes = glbBytes();
@@ -41,6 +90,25 @@ test('memory asset store clones bytes on save and load', async () => {
   assert.equal(new Uint8Array(loaded.bytes)[20], 123);
   await store.clear();
   assert.equal(await store.load(), null);
+});
+
+test('bundled asset fetch rejects HTTP and invalid GLB responses', async () => {
+  await assert.rejects(
+    () => fetchRiggedAsset('/missing.glb', {
+      fetchImpl: async () => ({ ok: false, status: 404 }),
+    }),
+    /HTTP 404/,
+  );
+  await assert.rejects(
+    () => fetchRiggedAsset('/bad.glb', {
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        async arrayBuffer() { return new ArrayBuffer(24); },
+      }),
+    }),
+    /GLB magic/i,
+  );
 });
 
 test('store rejects non-GLB assets', async () => {
