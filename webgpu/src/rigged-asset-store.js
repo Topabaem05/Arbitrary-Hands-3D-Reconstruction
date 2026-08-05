@@ -1,6 +1,6 @@
 const DEFAULT_DB_NAME = 'acr-hand-lab';
 const DEFAULT_STORE_NAME = 'private-assets';
-const DEFAULT_KEY = 'rigged-hand-glb-v1';
+const DEFAULT_KEY = 'rigged-hand-glb-v2';
 const GLB_MAGIC = 0x46546c67;
 const GLB_JSON_CHUNK = 0x4e4f534a;
 const MAX_GLB_BYTES = 32 * 1024 * 1024;
@@ -50,10 +50,46 @@ export async function readGlbFile(file) {
     name: String(file.name || 'rigged-hand.glb'),
     bytes: cloneBuffer(bytes),
     importedAt: Date.now(),
+    source: 'local',
   };
 }
 
-function validateAsset(value) {
+function assetNameFromUrl(url) {
+  try {
+    const pathname = new URL(url, 'https://local.invalid/').pathname;
+    return decodeURIComponent(pathname.split('/').filter(Boolean).at(-1) || 'rigged-hand.glb');
+  } catch {
+    return 'rigged-hand.glb';
+  }
+}
+
+export function resolveBundledAssetUrl({ key = DEFAULT_KEY, origin = globalThis.location?.origin } = {}) {
+  if (!origin) return null;
+  const lod = /lod1(?:$|:)/.test(String(key)) ? 1 : 0;
+  return new URL(`/assets/hand_rigged_v3_lod${lod}.glb`, origin).href;
+}
+
+export async function fetchRiggedAsset(
+  url,
+  { fetchImpl = globalThis.fetch, cache = 'force-cache' } = {},
+) {
+  if (typeof fetchImpl !== 'function') throw new TypeError('A fetch implementation is required.');
+  const response = await fetchImpl(url, { cache });
+  if (!response?.ok) {
+    throw new Error(`Bundled rigged hand request failed with HTTP ${response?.status ?? 'unknown'}.`);
+  }
+  const bytes = await response.arrayBuffer();
+  validateGlbHeader(bytes);
+  return {
+    name: assetNameFromUrl(url),
+    bytes: cloneBuffer(bytes),
+    importedAt: Date.now(),
+    source: 'bundled',
+    url: String(url),
+  };
+}
+
+function validateAsset(value, source = 'local') {
   if (!value || typeof value !== 'object') {
     throw new TypeError('Rigged hand asset must be an object.');
   }
@@ -65,6 +101,8 @@ function validateAsset(value) {
     name,
     bytes,
     importedAt: Number.isFinite(importedAt) ? importedAt : Date.now(),
+    source: value.source === 'bundled' ? 'bundled' : source,
+    ...(value.url ? { url: String(value.url) } : {}),
   };
 }
 
@@ -144,19 +182,30 @@ function createIndexedDbAdapter(dbName = DEFAULT_DB_NAME, storeName = DEFAULT_ST
 }
 
 export class RiggedAssetStore {
-  constructor({ adapter = null, key = DEFAULT_KEY } = {}) {
+  constructor({
+    adapter = null,
+    key = DEFAULT_KEY,
+    fallbackUrl = null,
+    fetchImpl = globalThis.fetch,
+  } = {}) {
     this.adapter = adapter
       ?? (typeof indexedDB === 'undefined' ? createMemoryAdapter() : createIndexedDbAdapter());
     this.key = key;
+    this.fallbackUrl = fallbackUrl
+      ? String(fallbackUrl)
+      : resolveBundledAssetUrl({ key });
+    this.fetchImpl = fetchImpl;
   }
 
   async load() {
     const value = await this.adapter.get(this.key);
-    return value == null ? null : validateAsset(value);
+    if (value != null) return validateAsset(value, 'local');
+    if (!this.fallbackUrl) return null;
+    return fetchRiggedAsset(this.fallbackUrl, { fetchImpl: this.fetchImpl });
   }
 
   async save(value) {
-    const asset = validateAsset(value);
+    const asset = validateAsset({ ...value, source: 'local' }, 'local');
     await this.adapter.set(this.key, asset);
     return { ...asset, bytes: cloneBuffer(asset.bytes) };
   }
@@ -166,6 +215,15 @@ export class RiggedAssetStore {
   }
 }
 
-export function createMemoryRiggedAssetStore({ key = DEFAULT_KEY } = {}) {
-  return new RiggedAssetStore({ adapter: createMemoryAdapter(), key });
+export function createMemoryRiggedAssetStore({
+  key = DEFAULT_KEY,
+  fallbackUrl = null,
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  return new RiggedAssetStore({
+    adapter: createMemoryAdapter(),
+    key,
+    fallbackUrl,
+    fetchImpl,
+  });
 }
