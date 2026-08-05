@@ -1,6 +1,7 @@
 import { CameraController, captureVideoFrame, scheduleVideoFrames } from './src/camera.js';
 import { loadManoBundleFile, ManoBundleStore } from './src/mano-bundle.js';
 import { HandMeshRenderer } from './src/mesh-renderer.js';
+import { RuntimePerformance } from './src/performance.js';
 import { OverlayRenderer } from './src/renderer.js';
 import { WebGpuHandTracker, loadModelManifest } from './src/runtime.js';
 import { LatestFrameScheduler } from './src/scheduler.js';
@@ -21,6 +22,7 @@ const overlayRenderer = new OverlayRenderer(elements.overlay, { mirrored: true }
 const camera = new CameraController(elements.video);
 const bundleStore = new ManoBundleStore();
 const maxHands = new URLSearchParams(location.search).get('hands') === '2' ? 2 : 1;
+const performanceMetrics = new RuntimePerformance({ windowMs: 5000 });
 
 let meshRenderer = null;
 let manoBundle = null;
@@ -109,15 +111,20 @@ function updateLatestInference(now) {
     return;
   }
   latestResult = scheduled.value;
+  performanceMetrics.recordInference(latestResult?.timing, scheduled.duration * 1000);
   meshRenderer?.updateHands(latestResult?.hands || [], now);
 }
 
 function renderLoop(now) {
+  const renderStarted = performance.now();
   updateLatestInference(now);
   meshRenderer?.render(now);
   if (mode === 'camera' && elements.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
     overlayRenderer.draw(elements.video, latestResult?.hands || []);
   }
+  performanceMetrics.recordRender(performance.now() - renderStarted);
+  const report = performanceMetrics.sample(now);
+  if (report) console.info('ACR M1 performance', report);
   renderRequest = requestAnimationFrame(renderLoop);
 }
 
@@ -126,7 +133,10 @@ async function submitCurrentVideoFrame() {
   if (!(elements.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)) return;
   snapshotPending = true;
   try {
-    scheduler.submit(await captureVideoFrame(elements.video));
+    const captureStarted = performance.now();
+    const frame = await captureVideoFrame(elements.video);
+    performanceMetrics.recordCapture(performance.now() - captureStarted);
+    scheduler.submit(frame);
   } catch (error) {
     console.error('Camera snapshot failed', error);
   } finally {
