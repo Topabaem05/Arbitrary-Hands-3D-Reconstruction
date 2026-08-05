@@ -6,14 +6,18 @@ on:
     paths:
       - 'webgpu/**'
       - 'tools/export_acr_webgpu.py'
+      - 'tools/convert_mano_browser_bundle.py'
       - 'tests/test_acr_webgpu_export.py'
+      - 'tests/test_mano_browser_bundle.py'
       - 'docs/WEBGPU.md'
       - '.github/workflows/webgpu.yml'
   pull_request:
     paths:
       - 'webgpu/**'
       - 'tools/export_acr_webgpu.py'
+      - 'tools/convert_mano_browser_bundle.py'
       - 'tests/test_acr_webgpu_export.py'
+      - 'tests/test_mano_browser_bundle.py'
       - 'docs/WEBGPU.md'
       - '.github/workflows/webgpu.yml'
 
@@ -42,14 +46,22 @@ jobs:
       - name: JavaScript unit tests
         run: node --test webgpu/tests/*.test.mjs
 
-      - name: Python exporter tests
-        run: python -m unittest tests/test_acr_webgpu_export.py -v
+      - name: Python browser-export tests
+        run: >-
+          python -m unittest
+          tests/test_acr_webgpu_export.py
+          tests/test_mano_browser_bundle.py
+          -v
 
       - name: Syntax and configuration checks
         run: |
           node --check webgpu/app.js
           for file in webgpu/src/*.js; do node --check "$file"; done
-          python -m py_compile tools/export_acr_webgpu.py tests/test_acr_webgpu_export.py
+          python -m py_compile \
+            tools/export_acr_webgpu.py \
+            tools/convert_mano_browser_bundle.py \
+            tests/test_acr_webgpu_export.py \
+            tests/test_mano_browser_bundle.py
           python -m json.tool webgpu/models/manifest.json >/dev/null
           python -m json.tool webgpu/vercel.json >/dev/null
 
@@ -61,3 +73,4 @@ jobs:
           sleep 1
           curl --fail --silent --show-error http://127.0.0.1:4173/ | grep -F 'ACR Hand Lab'
           curl --fail --silent --show-error http://127.0.0.1:4173/models/manifest.json | python -m json.tool >/dev/null
+          curl --fail --silent --show-error http://127.0.0.1:4173/favicon.svg >/dev/null
