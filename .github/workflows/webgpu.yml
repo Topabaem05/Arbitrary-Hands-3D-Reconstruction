@@ -7,8 +7,10 @@ on:
       - 'webgpu/**'
       - 'tools/export_acr_webgpu.py'
       - 'tools/convert_mano_browser_bundle.py'
+      - 'tools/rig_hand_obj_to_glb.py'
       - 'tests/test_acr_webgpu_export.py'
       - 'tests/test_mano_browser_bundle.py'
+      - 'tests/test_rig_hand_obj_to_glb.py'
       - 'docs/WEBGPU.md'
       - '.github/workflows/webgpu.yml'
   pull_request:
@@ -16,8 +18,10 @@ on:
       - 'webgpu/**'
       - 'tools/export_acr_webgpu.py'
       - 'tools/convert_mano_browser_bundle.py'
+      - 'tools/rig_hand_obj_to_glb.py'
       - 'tests/test_acr_webgpu_export.py'
       - 'tests/test_mano_browser_bundle.py'
+      - 'tests/test_rig_hand_obj_to_glb.py'
       - 'docs/WEBGPU.md'
       - '.github/workflows/webgpu.yml'
 
@@ -40,17 +44,20 @@ jobs:
           python-version: '3.11'
           cache: pip
 
-      - name: Install CPU test dependency
-        run: pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu
+      - name: Install CPU test dependencies
+        run: |
+          pip install numpy
+          pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu
 
       - name: JavaScript unit tests
         run: node --test webgpu/tests/*.test.mjs
 
-      - name: Python browser-export tests
+      - name: Python browser-export and rigging tests
         run: >-
           python -m unittest
           tests/test_acr_webgpu_export.py
           tests/test_mano_browser_bundle.py
+          tests/test_rig_hand_obj_to_glb.py
           -v
 
       - name: Syntax and configuration checks
@@ -60,8 +67,10 @@ jobs:
           python -m py_compile \
             tools/export_acr_webgpu.py \
             tools/convert_mano_browser_bundle.py \
+            tools/rig_hand_obj_to_glb.py \
             tests/test_acr_webgpu_export.py \
-            tests/test_mano_browser_bundle.py
+            tests/test_mano_browser_bundle.py \
+            tests/test_rig_hand_obj_to_glb.py
           python -m json.tool webgpu/models/manifest.json >/dev/null
           python -m json.tool webgpu/vercel.json >/dev/null
 
@@ -72,5 +81,13 @@ jobs:
           trap 'kill $server_pid' EXIT
           sleep 1
           curl --fail --silent --show-error http://127.0.0.1:4173/ | grep -F 'ACR Hand Lab'
+          curl --fail --silent --show-error http://127.0.0.1:4173/ | grep -F 'riggedHandInput'
           curl --fail --silent --show-error http://127.0.0.1:4173/models/manifest.json | python -m json.tool >/dev/null
           curl --fail --silent --show-error http://127.0.0.1:4173/favicon.svg >/dev/null
+
+      - name: Reject committed private hand assets
+        run: |
+          if git ls-files | grep -E '(MANO_(LEFT|RIGHT)\.pkl|mano-browser-bundle.*\.json|hand_rigged.*\.glb|\.rigged-hand.*\.glb|12683_hand_v1_FINAL\.obj)$'; then
+            echo 'Private hand assets must not be committed.' >&2
+            exit 1
+          fi
