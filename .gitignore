@@ -6,3 +6,26 @@ demos_outputs/
 */*/*/__pycache__
 *.log
 active_configs/*
+
+# Locally generated WebGPU artifacts. They may contain checkpoint or MANO data.
+private_models/
+webgpu/private_models/
+*.onnx.json
+mano-browser-bundle*.json
+webgpu/mano-browser-bundle*.json
+
+# Uploaded and generated private rigged-hand working files.
+hand_v1_L1*.zip
+hand_v1_L1*/
+hand_rig_work/
+rigged_hand_assets/
+12683_hand_v1_FINAL.obj
+hand_rigged*.glb
+hand_rigged*.glb.json
+*.rigged-hand*.glb
+*.rigged-hand*.glb.json
+
+# Explicitly published browser defaults approved for public Vercel delivery.
+!webgpu/assets/
+!webgpu/assets/hand_rigged_v3_lod0.glb
+!webgpu/assets/hand_rigged_v3_lod1.glb

@@ -24,6 +24,18 @@ This is the official repository of the ACR.
 - [2023/03/24] **Code release!** ⭐
 - [2023/03/10] **ACR is on [arXiv](https://arxiv.org/abs/2303.05938) now.**
 - [2023/02/27] **ACR got accepted by CVPR 2023!** 🎉
+## Browser WebGPU demo
+
+The `webgpu/` directory contains a zero-build browser application for realtime, on-device hand tracking with ONNX Runtime Web. It prefers WebGPU and falls back to WebAssembly. The public deployment uses redistributable OpenCV MediaPipe ONNX models and does not include ACR checkpoints or MANO data.
+
+```bash
+python3 -m http.server 4173 --directory webgpu
+```
+
+Open `http://localhost:4173/`, or use `?demo=1` for the dependency-free synthetic preview. See [`docs/WEBGPU.md`](docs/WEBGPU.md) for model overrides, Vercel deployment, browser requirements, and the private ACR-to-ONNX exporter.
+
+> ACR+MANO conversion is local-only by default. Do not publish generated MANO-bearing artifacts unless your MANO agreement explicitly permits redistribution.
+
 ## Requirements
 
 ### Conda environments
